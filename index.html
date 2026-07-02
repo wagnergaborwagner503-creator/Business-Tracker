@@ -122,8 +122,8 @@ function resizeImage(file, maxDim = 900, quality = 0.8) {
 
 /* ===================== INDEXEDDB RÉTEG ===================== */
 const DB_NAME = 'business_tracker_db';
-const DB_VERSION = 1;
-const STORES = ['businesses', 'products', 'sales', 'expenses', 'notes', 'priceCalcPresets', 'settings'];
+const DB_VERSION = 2;
+const STORES = ['businesses', 'products', 'sales', 'expenses', 'notes', 'priceCalcPresets', 'materials', 'settings'];
 
 function idbOpen() {
   return new Promise((resolve, reject) => {
@@ -132,7 +132,7 @@ function idbOpen() {
       const db = req.result;
       if (!db.objectStoreNames.contains('businesses')) db.createObjectStore('businesses', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
-      ['products', 'sales', 'expenses', 'notes', 'priceCalcPresets'].forEach(name => {
+      ['products', 'sales', 'expenses', 'notes', 'priceCalcPresets', 'materials'].forEach(name => {
         if (!db.objectStoreNames.contains(name)) {
           const s = db.createObjectStore(name, { keyPath: 'id' });
           s.createIndex('businessId', 'businessId', { unique: false });
@@ -262,6 +262,16 @@ async function seedDemoBusiness() {
   ];
   for (const n of notes) await idbPut('notes', n);
 
+  const materials = [
+    { id: uid(), businessId, name: 'Vászon', qty: 8.5, unit: 'm', unitCost: 2200 },
+    { id: uid(), businessId, name: 'Plüss anyag', qty: 3.2, unit: 'm', unitCost: 3500 },
+    { id: uid(), businessId, name: 'Cipzár', qty: 14, unit: 'db', unitCost: 400 },
+    { id: uid(), businessId, name: 'Vállpánt', qty: 20, unit: 'db', unitCost: 150 },
+    { id: uid(), businessId, name: 'Töltőanyag', qty: 850, unit: 'g', unitCost: 3 },
+    { id: uid(), businessId, name: 'Kulcskarika', qty: 25, unit: 'db', unitCost: 100 },
+  ];
+  for (const m of materials) await idbPut('materials', m);
+
   return businessId;
 }
 
@@ -272,7 +282,7 @@ async function createBusiness(name) {
   return business;
 }
 async function deleteBusinessCascade(businessId) {
-  await Promise.all(['products','sales','expenses','notes','priceCalcPresets'].map(s => idbDeleteByBusiness(s, businessId)));
+  await Promise.all(['products','sales','expenses','notes','priceCalcPresets','materials'].map(s => idbDeleteByBusiness(s, businessId)));
   await idbDelete('businesses', businessId);
 }
 
@@ -302,6 +312,7 @@ function MonthNav({ month, onChange, allowAll, isAll, onAll }) {
 }
 
 function BottomSheet({ open, onClose, title, children }) {
+  useBackButton(open, onClose);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
@@ -335,6 +346,41 @@ function EmptyState({ icon, text }) {
       <div className="text-sm" style={{color:'var(--text-dim)'}}>{text}</div>
     </div>
   );
+}
+
+/* ===================== VISSZA GOMB / HISTORY KEZELÉS ===================== */
+// A telefon/böngésző vissza gombja ne az egész appból léptessen ki, hanem
+// csak a legfelső nyitott réteget (sheet vagy aloldal) zárja be.
+const navStack = [];
+let suppressNextPopstate = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => {
+    if (suppressNextPopstate) { suppressNextPopstate = false; return; }
+    const top = navStack.pop();
+    if (top) top();
+  });
+}
+function useBackButton(isOpen, onClose) {
+  const registered = useRef(false);
+  const pushedHandlerRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (isOpen && !registered.current) {
+      registered.current = true;
+      const handler = () => onCloseRef.current();
+      pushedHandlerRef.current = handler;
+      navStack.push(handler);
+      window.history.pushState({ __nav: navStack.length }, '');
+    } else if (!isOpen && registered.current) {
+      registered.current = false;
+      const idx = navStack.lastIndexOf(pushedHandlerRef.current);
+      if (idx !== -1) navStack.splice(idx, 1);
+      pushedHandlerRef.current = null;
+      suppressNextPopstate = true;
+      window.history.back();
+    }
+  }, [isOpen]);
 }
 
 function ChartCanvas({ type, data, options, height=200 }) {
@@ -457,15 +503,6 @@ function Dashboard({ business, products, sales, expenses, channels, onNav }) {
   const lastProfit = lastMonthSales.reduce((a,s)=>a+(s.net??0),0) - lastMonthExpenses.reduce((a,e)=>a+e.amount,0);
   const profitChangePct = lastProfit !== 0 ? Math.round(((profit-lastProfit)/Math.abs(lastProfit))*100) : (profit>0 ? 100 : 0);
 
-  const last6 = Array.from({length:6}, (_,i) => shiftMonth(month, -(5-i)));
-  const trendData = {
-    labels: last6.map(k => HU_MONTHS[Number(k.split('-')[1])-1]),
-    datasets: [
-      { label:'Bevétel', data: last6.map(k => sales.filter(s=>monthKey(s.date)===k).reduce((a,s)=>a+(s.net ?? s.qty*s.unitPrice),0)), borderColor: PALETTE.grass, backgroundColor: PALETTE.grass+'33', tension:.35, fill:true },
-      { label:'Kiadás', data: last6.map(k => expenses.filter(e=>monthKey(e.date)===k).reduce((a,e)=>a+e.amount,0)), borderColor: PALETTE.dusty, backgroundColor: PALETTE.dusty+'33', tension:.35, fill:true },
-    ]
-  };
-
   const recent = [...sales.map(s=>({...s,kind:'sale'})), ...expenses.map(e=>({...e,kind:'expense'}))]
     .sort((a,b)=> (b.date||'').localeCompare(a.date||'')).slice(0,6);
 
@@ -480,14 +517,6 @@ function Dashboard({ business, products, sales, expenses, channels, onNav }) {
     { icon:'box', label:'Termék', color:PALETTE.sky, onClick:()=>onNav('products','new') },
     { icon:'calculator', label:'Kalkulátor', color:PALETTE.lavender, onClick:()=>onNav('calculator') },
   ];
-
-  const activeMonths = [...new Set([...sales, ...expenses].map(item => monthKey(item.date)).filter(Boolean))];
-  const avgMonthlyRevenue = activeMonths.length ? activeMonths.reduce((a,k)=>a+sales.filter(s=>monthKey(s.date)===k).reduce((x,s)=>x+(s.net??0),0),0) / activeMonths.length : 0;
-  const avgMonthlyProfit = activeMonths.length ? activeMonths.reduce((a,k)=>{
-    const rev = sales.filter(s=>monthKey(s.date)===k).reduce((x,s)=>x+(s.net??0),0);
-    const exp = expenses.filter(e=>monthKey(e.date)===k).reduce((x,e)=>x+e.amount,0);
-    return a + (rev-exp);
-  },0) / activeMonths.length : 0;
 
   return (
     <div className="fade-in p-4 pb-28 space-y-5">
@@ -542,26 +571,6 @@ function Dashboard({ business, products, sales, expenses, channels, onNav }) {
         ))}
       </div>
 
-      <div className="card p-4">
-        <div className="font-bold mb-3">Átlagos havi jövedelem</div>
-        <div className="grid grid-cols-2 divide-x" style={{borderColor:'var(--border)'}}>
-          <div className="text-center px-1">
-            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Átlagos havi bevétel</div>
-            <div className="font-extrabold" style={{color:PALETTE.grass}}>{fmtHUF(avgMonthlyRevenue)}</div>
-          </div>
-          <div className="text-center px-1">
-            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Átlagos havi profit</div>
-            <div className="font-extrabold">{fmtHUF(avgMonthlyProfit)}</div>
-          </div>
-        </div>
-        {activeMonths.length > 0 && <div className="text-[11px] text-center mt-2" style={{color:'var(--text-dim)'}}>{activeMonths.length} hónap adatai alapján</div>}
-      </div>
-
-      <div className="card p-4">
-        <div className="font-bold mb-2">6 havi trend</div>
-        <ChartCanvas type="line" data={trendData} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'var(--text)'}}}, scales:{x:{ticks:{color:'var(--text-dim)'}},y:{ticks:{color:'var(--text-dim)'}}} }} height={200} />
-      </div>
-
       {channelTotals.length > 0 && (
         <div>
           <div className="font-bold mb-2">Csatornák (havi bevétel)</div>
@@ -607,7 +616,7 @@ function Dashboard({ business, products, sales, expenses, channels, onNav }) {
 
 /* ===================== TERMÉKEK ===================== */
 function ProductForm({ initial, onSave, onClose, categories, channels }) {
-  const [form, setForm] = useState(initial || { name:'', category: categories[0], cost:'', price:'', stock:'', photos:[], materials:[], channelPrices:{} });
+  const [form, setForm] = useState(initial || { name:'', category: categories[0], cost:'', price:'', stock:'', photos:[], materials:[], channelPrices:{}, prepHours:'', hourlyRate:'', growthPct:10 });
   const set = (k,v) => setForm(f => ({...f, [k]:v}));
   const fileRef = useRef(null);
 
@@ -621,6 +630,25 @@ function ProductForm({ initial, onSave, onClose, categories, channels }) {
   const materialTotal = materials.reduce((a,m)=>a+(Number(m.qty)||0)*(Number(m.unitCost)||0),0);
   const setMaterial = (i, key, val) => { const arr=[...materials]; arr[i] = {...arr[i], [key]:val}; set('materials', arr); };
   const addMaterial = () => set('materials', [...materials, { name:'', qty:1, unit:'db', unitCost:'' }]);
+
+  const effectiveMaterialCost = materialTotal || Number(form.cost)||0;
+  const prepHours = Number(form.prepHours)||0;
+  const hourlyRate = Number(form.hourlyRate)||0;
+  const growthPct = Number(form.growthPct)||0;
+  const labor = prepHours * hourlyRate;
+  const suggestedRevenue = (effectiveMaterialCost + labor) * (1 + growthPct/100);
+  const suggestedPriceFor = (fee) => suggestedRevenue * (1 + fee/100);
+
+  const setChannelPrice = (channelId, fee, value) => {
+    const finalPrice = value === '' ? undefined : Number(value);
+    set('channelPrices', { ...(form.channelPrices||{}), [channelId]: finalPrice });
+    if (finalPrice !== undefined && prepHours > 0) {
+      const revenue = finalPrice / (1 + fee/100);
+      const laborPlusMaterial = revenue / (1 + growthPct/100);
+      const newLabor = laborPlusMaterial - effectiveMaterialCost;
+      set('hourlyRate', Math.max(0, Math.round(newLabor / prepHours)));
+    }
+  };
   const removeMaterial = (i) => set('materials', materials.filter((_,j)=>j!==i));
 
   return (
@@ -695,13 +723,30 @@ function ProductForm({ initial, onSave, onClose, categories, channels }) {
       </div>
 
       <div className="card p-3">
-        <div className="font-semibold text-sm mb-2">Csatornánkénti ár (opcionális)</div>
-        <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Ha üresen hagyod, az alapár érvényes az adott csatornán.</div>
+        <div className="font-semibold text-sm mb-1">Készítés és óraber</div>
+        <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Mennyi idő és mekkora órabér mellett készül el egy darab — ebből számoljuk az ajánlott árakat.</div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Készítési idő (óra)</label><input type="number" className="input mt-0.5" value={form.prepHours} onChange={e=>set('prepHours', e.target.value)} placeholder="pl. 2" /></div>
+          <div><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Órabér (Ft)</label><input type="number" className="input mt-0.5" value={form.hourlyRate} onChange={e=>set('hourlyRate', e.target.value)} placeholder="pl. 4000" /></div>
+        </div>
+        <div className="mb-2"><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Vállalkozásfejlesztésre (%)</label><input type="number" className="input mt-0.5" value={form.growthPct} onChange={e=>set('growthPct', e.target.value)} /></div>
+        <div className="rounded-xl p-2.5 flex items-center justify-between text-sm" style={{background:'var(--bg)'}}>
+          <span style={{color:'var(--text-dim)'}}>Munkadíj (idő × órabér)</span>
+          <span className="font-bold">{fmtHUF(labor)}</span>
+        </div>
+      </div>
+
+      <div className="card p-3">
+        <div className="font-semibold text-sm mb-1">Ajánlott ár csatornánként</div>
+        <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Anyagköltség ({fmtHUF(effectiveMaterialCost)}) + munkadíj alapján számolt ajánlás. Ha beírsz egy végleges árat, abból visszaszámoljuk az órabért.</div>
         <div className="space-y-2">
           {channels.map(c => (
-            <div key={c.id} className="flex items-center gap-2">
-              <span className="flex-1 text-sm truncate">{c.name}</span>
-              <input type="number" className="input py-1.5 w-28" placeholder={String(form.price || 0)} value={(form.channelPrices||{})[c.id] ?? ''} onChange={e=>set('channelPrices', {...(form.channelPrices||{}), [c.id]: e.target.value===''?undefined:Number(e.target.value)})} />
+            <div key={c.id} className="rounded-xl p-2.5" style={{background:'var(--bg)'}}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-semibold truncate">{c.name} <span className="text-xs font-normal" style={{color:'var(--text-dim)'}}>({c.fee}%)</span></span>
+                <span className="text-sm" style={{color:PALETTE.grass}}>Ajánlott: <b>{fmtHUF(suggestedPriceFor(c.fee))}</b></span>
+              </div>
+              <input type="number" className="input py-1.5" placeholder="Végleges ár…" value={(form.channelPrices||{})[c.id] ?? ''} onChange={e=>setChannelPrice(c.id, c.fee, e.target.value)} />
             </div>
           ))}
         </div>
@@ -709,14 +754,14 @@ function ProductForm({ initial, onSave, onClose, categories, channels }) {
 
       <button className="btn-primary w-full py-3 rounded-2xl font-bold mt-2" onClick={() => {
         if (!form.name.trim()) return;
-        onSave({ ...form, cost:Number(form.cost)||0, price:Number(form.price)||0, stock:Number(form.stock)||0, materials });
+        onSave({ ...form, cost:Number(form.cost)||0, price:Number(form.price)||0, stock:Number(form.stock)||0, materials, prepHours, hourlyRate, growthPct });
         onClose();
       }}>Mentés</button>
     </div>
   );
 }
 
-function Products({ business, products, categories, channels, onSave, onDelete, autoOpenNew, onAutoOpenHandled }) {
+function Products({ business, products, sales, categories, channels, onSave, onDelete, autoOpenNew, onAutoOpenHandled }) {
   const [editing, setEditing] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [filter, setFilter] = useState('Mind');
@@ -724,6 +769,7 @@ function Products({ business, products, categories, channels, onSave, onDelete, 
   useEffect(() => { if (autoOpenNew) { setEditing(null); setSheetOpen(true); onAutoOpenHandled(); } }, [autoOpenNew]);
 
   const filtered = filter==='Mind' ? products : products.filter(p=>p.category===filter);
+  const soldQtyFor = (name) => sales.filter(s=>s.productName===name).reduce((a,s)=>a+(Number(s.qty)||0),0);
 
   return (
     <div className="fade-in p-4 pb-28 space-y-4">
@@ -746,6 +792,7 @@ function Products({ business, products, categories, channels, onSave, onDelete, 
               <div className="p-3">
                 <div className="font-semibold text-sm truncate">{p.name}</div>
                 <div className="text-xs" style={{color:'var(--text-dim)'}}>{p.category} · Készlet: {p.stock}</div>
+                <div className="text-xs" style={{color:PALETTE.grass}}>Eladva: {soldQtyFor(p.name)} db</div>
                 <div className="font-bold mt-1" style={{color:'var(--cacao)'}}>{fmtHUF(p.price)}</div>
               </div>
             </div>
@@ -1258,6 +1305,77 @@ function Notes({ business, notes, onSave, onDelete }) {
   );
 }
 
+/* ===================== ANYAG RAKTÁR ===================== */
+function MaterialForm({ initial, onSave, onClose }) {
+  const [form, setForm] = useState(initial || { name:'', qty:'', unit:'db', unitCost:'' });
+  const set = (k,v) => setForm(f => ({...f, [k]:v}));
+  return (
+    <div className="space-y-3">
+      <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Anyag neve</label><input className="input mt-1" value={form.name} onChange={e=>set('name', e.target.value)} placeholder="pl. Vászon" /></div>
+      <div className="grid grid-cols-3 gap-2">
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label><input type="number" className="input mt-1" value={form.qty} onChange={e=>set('qty', e.target.value)} /></div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Egység</label><input className="input mt-1" value={form.unit} onChange={e=>set('unit', e.target.value)} placeholder="db / m / g" /></div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Ft / egység</label><input type="number" className="input mt-1" value={form.unitCost} onChange={e=>set('unitCost', e.target.value)} /></div>
+      </div>
+      <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={()=>{
+        if (!form.name.trim()) return;
+        onSave({ ...form, qty:Number(form.qty)||0, unitCost:Number(form.unitCost)||0 });
+        onClose();
+      }}>Mentés</button>
+    </div>
+  );
+}
+
+function Warehouse({ business, materials, onSave, onDelete }) {
+  const [editing, setEditing] = useState(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const sorted = [...materials].sort((a,b)=>a.name.localeCompare(b.name,'hu'));
+  const totalValue = materials.reduce((a,m)=>a+(Number(m.qty)||0)*(Number(m.unitCost)||0),0);
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold">Anyagraktár</h1>
+        <button onClick={()=>{setEditing(null); setSheetOpen(true);}} className="btn-primary icon-circle w-10 h-10"><Icon name="plus" size={18} /></button>
+      </div>
+
+      {materials.length > 0 && (
+        <div className="card p-4 flex items-center justify-between">
+          <span className="font-semibold text-sm" style={{color:'var(--text-dim)'}}>Készlet összértéke</span>
+          <span className="font-extrabold" style={{color:'var(--cacao)'}}>{fmtHUF(totalValue)}</span>
+        </div>
+      )}
+
+      {sorted.length === 0 ? (
+        <EmptyState icon="layers" text="Még nincs felvitt anyag. Add hozzá, miből mennyi van raktáron." />
+      ) : (
+        <div className="space-y-2">
+          {sorted.map(m => (
+            <div key={m.id} className="card p-3 flex items-center gap-3" onClick={()=>{setEditing(m); setSheetOpen(true);}}>
+              <div className="icon-circle w-10 h-10" style={{background:'var(--peony)', color:'var(--cacao)'}}><Icon name="layers" size={17} /></div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold truncate">{m.name}</div>
+                <div className="text-xs" style={{color:'var(--text-dim)'}}>{m.unitCost > 0 ? `${fmtHUF(m.unitCost)} / ${m.unit}` : m.unit}</div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="font-bold">{m.qty} {m.unit}</div>
+                {m.unitCost > 0 && <div className="text-xs" style={{color:'var(--text-dim)'}}>{fmtHUF(m.qty*m.unitCost)}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={editing ? 'Anyag szerkesztése' : 'Új anyag'}>
+        <MaterialForm initial={editing} onClose={()=>setSheetOpen(false)}
+          onSave={(data)=>onSave({ id: editing?.id || uid(), businessId: business.id, ...data })} />
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Anyag törlése</button>}
+      </BottomSheet>
+    </div>
+  );
+}
+
 /* ===================== BEVÁSÁRLÓLISTA ===================== */
 function ShoppingList({ business, products }) {
   const [items, setItems] = useState([]); // [{productId, qty}]
@@ -1669,11 +1787,28 @@ function App() {
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [materials, setMaterials] = useState([]);
   const [channels, setChannelsState] = useState(DEFAULT_CHANNELS);
   const [expenseCategories, setExpenseCategoriesState] = useState(DEFAULT_EXPENSE_CATEGORIES);
   const [productCategories, setProductCategoriesState] = useState(DEFAULT_PRODUCT_CATEGORIES);
   const [theme, setThemeState] = useState('light');
-  const [page, setPage] = useState('dashboard');
+  const [page, setPageState] = useState('dashboard');
+  const homeHandlerRef = useRef(null);
+  useEffect(() => {
+    if (page !== 'dashboard' && !homeHandlerRef.current) {
+      const handler = () => { homeHandlerRef.current = null; setPageState('dashboard'); };
+      homeHandlerRef.current = handler;
+      navStack.push(handler);
+      window.history.pushState({ __nav: 'home' }, '');
+    } else if (page === 'dashboard' && homeHandlerRef.current) {
+      const idx = navStack.lastIndexOf(homeHandlerRef.current);
+      if (idx !== -1) navStack.splice(idx, 1);
+      homeHandlerRef.current = null;
+      suppressNextPopstate = true;
+      window.history.back();
+    }
+  }, [page]);
+  const setPage = (p) => setPageState(p);
   const [pendingTab, setPendingTab] = useState(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [storageInfo, setStorageInfo] = useState('...');
@@ -1715,13 +1850,14 @@ function App() {
 
   const reloadBusinessData = useCallback(async (businessId) => {
     if (!businessId) return;
-    const [p,s,e,n] = await Promise.all([
+    const [p,s,e,n,m] = await Promise.all([
       idbGetAllByBusiness('products', businessId),
       idbGetAllByBusiness('sales', businessId),
       idbGetAllByBusiness('expenses', businessId),
       idbGetAllByBusiness('notes', businessId),
+      idbGetAllByBusiness('materials', businessId),
     ]);
-    setProducts(p); setSales(s); setExpenses(e); setNotes(n);
+    setProducts(p); setSales(s); setExpenses(e); setNotes(n); setMaterials(m);
   }, []);
 
   useEffect(() => { if (ready && activeId) reloadBusinessData(activeId); }, [ready, activeId]);
@@ -1756,6 +1892,8 @@ function App() {
   const deleteExpense = async (id) => { await idbDelete('expenses', id); setExpenses(list=>list.filter(x=>x.id!==id)); };
   const saveNote = async (n) => { await idbPut('notes', n); setNotes(list => { const i=list.findIndex(x=>x.id===n.id); if (i>=0){ const c=[...list]; c[i]=n; return c;} return [...list,n]; }); };
   const deleteNote = async (id) => { await idbDelete('notes', id); setNotes(list=>list.filter(x=>x.id!==id)); };
+  const saveMaterial = async (m) => { await idbPut('materials', m); setMaterials(list => { const i=list.findIndex(x=>x.id===m.id); if (i>=0){ const c=[...list]; c[i]=m; return c;} return [...list,m]; }); };
+  const deleteMaterial = async (id) => { await idbDelete('materials', id); setMaterials(list=>list.filter(x=>x.id!==id)); };
 
   const exportAll = async () => {
     const data = {};
@@ -1816,8 +1954,8 @@ function App() {
 
   const business = businesses.find(b=>b.id===activeId);
   const NAV = [
-    ['dashboard','Kezdőlap','home'], ['products','Termékek','box'], ['finances','Pénzügyek','card'],
-    ['stats','Statisztika','chart'], ['more','Több','menu'],
+    ['dashboard','Főoldal','home'], ['products','Termékek','box'], ['warehouse','Raktár','layers'],
+    ['finances','Pénzügyek','card'], ['more','Több','menu'],
   ];
 
   return (
@@ -1841,17 +1979,18 @@ function App() {
       </div>
 
       {page === 'dashboard' && <Dashboard business={business} products={products} sales={sales} expenses={expenses} channels={channels} onNav={nav} />}
-      {page === 'products' && <Products business={business} products={products} categories={productCategories} channels={channels} onSave={saveProduct} onDelete={deleteProduct} autoOpenNew={pendingTab==='new'} onAutoOpenHandled={()=>setPendingTab(null)} />}
+      {page === 'products' && <Products business={business} products={products} sales={sales} categories={productCategories} channels={channels} onSave={saveProduct} onDelete={deleteProduct} autoOpenNew={pendingTab==='new'} onAutoOpenHandled={()=>setPendingTab(null)} />}
       {page === 'finances' && <Finances business={business} products={products} sales={sales} expenses={expenses} channels={channels} expenseCategories={expenseCategories} onSaveSale={saveSale} onDeleteSale={deleteSale} onSaveExpense={saveExpense} onDeleteExpense={deleteExpense} initialTab={pendingTab} onAutoOpenHandled={()=>setPendingTab(null)} />}
       {page === 'stats' && <Stats sales={sales} expenses={expenses} channels={channels} expenseCategories={expenseCategories} products={products} />}
       {page === 'calculator' && <Calculator channels={channels} products={products} onSavePreset={async (preset)=>{ await idbPut('priceCalcPresets', {...preset, businessId: business.id}); alert('Kalkuláció elmentve.'); }} onSaveToProduct={(p)=>{ saveProduct({ id: uid(), businessId: business.id, category: productCategories[0], stock:0, photos:[], createdAt: todayISO(), ...p }); setPage('products'); }} />}
       {page === 'notes' && <Notes business={business} notes={notes} onSave={saveNote} onDelete={deleteNote} />}
       {page === 'shopping' && <ShoppingList business={business} products={products} />}
+      {page === 'warehouse' && <Warehouse business={business} materials={materials} onSave={saveMaterial} onDelete={deleteMaterial} />}
       {page === 'settings' && <Settings business={business} businesses={businesses} sales={sales} expenses={expenses} products={products} channels={channels} setChannels={setChannelsState} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategoriesState} productCategories={productCategories} setProductCategories={setProductCategoriesState} theme={theme} setTheme={setThemeState} onExportAll={exportAll} onImportAll={importAll} onExportExcel={exportExcel} storageInfo={storageInfo} onOpenBusinessSwitcher={()=>setSwitcherOpen(true)} />}
       {page === 'more' && (
         <div className="fade-in p-4 pb-28 space-y-3">
           <h1 className="text-2xl font-extrabold mb-2">Több</h1>
-          {[['calculator','Árkalkulátor','calculator'],['shopping','Bevásárlólista','shoppingList'],['notes','Jegyzetek','note'],['settings','Beállítások','settings']].map(([id,label,icon]) => (
+          {[['stats','Statisztika','chart'],['calculator','Árkalkulátor','calculator'],['shopping','Bevásárlólista','shoppingList'],['notes','Jegyzetek','note'],['settings','Beállítások','settings']].map(([id,label,icon]) => (
             <button key={id} onClick={()=>setPage(id)} className="card p-4 w-full flex items-center gap-3 text-left">
               <div className="icon-circle w-10 h-10" style={{background:'var(--peony)', color:'var(--cacao)'}}><Icon name={icon} size={18} /></div>
               <span className="font-semibold">{label}</span>
@@ -1865,7 +2004,7 @@ function App() {
         <div className="max-w-md mx-auto px-4">
           <div className="flex items-stretch justify-between px-2 py-2 nav-pill" style={{background:'var(--surface)'}}>
             {NAV.map(([id,label,icon]) => {
-              const active = page===id || (id==='more' && ['calculator','shopping','notes','settings'].includes(page));
+              const active = page===id || (id==='more' && ['stats','calculator','shopping','notes','settings'].includes(page));
               return (
                 <button key={id} onClick={()=>{ setPage(id); setPendingTab(null); }} className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-full transition"
                   style={{color: active ? '#fff' : 'var(--text-dim)', background: active ? 'var(--cacao)' : 'transparent', margin:'0 2px', minWidth:0}}>
