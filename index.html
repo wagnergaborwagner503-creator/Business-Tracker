@@ -320,6 +320,50 @@ function MonthNav({ month, onChange, allowAll, isAll, onAll }) {
   );
 }
 
+/* ===================== ALKALMAZÁSON BELÜLI MEGERŐSÍTÉS / ÉRTESÍTÉS ===================== */
+// Semmilyen natív window.alert/confirm ablakot nem használunk (azok az oldal címét is
+// megmutatják és kilógnak az app dizájnjából) — helyette ezt a két saját komponenst.
+let _confirmImpl = null;
+function confirmDialog(message, confirmLabel = 'Törlés', danger = true) {
+  return new Promise(resolve => {
+    if (_confirmImpl) _confirmImpl({ message, confirmLabel, danger, resolve });
+    else resolve(true);
+  });
+}
+function ConfirmHost() {
+  const [state, setState] = useState(null);
+  useEffect(() => { _confirmImpl = (s) => setState(s); return () => { _confirmImpl = null; }; }, []);
+  useBackButton(!!state, () => { if (state) { const r = state.resolve; setState(null); r(false); } });
+  if (!state) return null;
+  const close = (result) => { const r = state.resolve; setState(null); r(result); };
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-6" onClick={()=>close(false)}>
+      <div className="absolute inset-0 bg-black/50"></div>
+      <div className="sheet relative card p-5 w-full max-w-xs" onClick={e=>e.stopPropagation()}>
+        <div className="font-semibold mb-4 text-center whitespace-pre-line">{state.message}</div>
+        <div className="flex gap-2">
+          <button className="chip flex-1 text-center font-semibold" style={{background:'var(--bg)'}} onClick={()=>close(false)}>Mégse</button>
+          <button className="chip flex-1 text-center font-bold text-white" style={{background: state.danger?'var(--danger)':'var(--cacao)'}} onClick={()=>close(true)}>{state.confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+let _toastImpl = null;
+function notify(message) { if (_toastImpl) _toastImpl(message); }
+function ToastHost() {
+  const [msg, setMsg] = useState(null);
+  useEffect(() => { _toastImpl = (m) => setMsg(m); return () => { _toastImpl = null; }; }, []);
+  useEffect(() => { if (!msg) return; const t = setTimeout(()=>setMsg(null), 2800); return ()=>clearTimeout(t); }, [msg]);
+  if (!msg) return null;
+  return (
+    <div className="fixed left-1/2 z-[70] px-4 py-3 rounded-2xl text-sm font-semibold text-white text-center fade-in" style={{bottom:'96px', transform:'translateX(-50%)', background:'var(--cacao)', maxWidth:'88vw', boxShadow:'0 8px 24px rgba(0,0,0,.25)'}}>
+      {msg}
+    </div>
+  );
+}
+
 function BottomSheet({ open, onClose, title, children }) {
   useBackButton(open, onClose);
   const [dragY, setDragY] = useState(0);
@@ -866,7 +910,7 @@ function Products({ business, products, sales, categories, channels, onSave, onD
     const copy = { ...p, id: uid(), name: `${p.name} (másolat)`, createdAt: todayISO() };
     onSave(copy);
     setEditing(copy);
-    alert('Duplikálás sikeres — most a másolatot szerkeszted.');
+    notify('Duplikálás sikeres — most a másolatot szerkeszted.');
   };
 
   const addToShoppingList = async (productId) => {
@@ -875,7 +919,7 @@ function Products({ business, products, sales, categories, channels, onSave, onD
     const existing = list.find(it=>it.productId===productId);
     const updated = existing ? list.map(it=>it.productId===productId ? {...it, qty: it.qty+1} : it) : [...list, { productId, qty: 1 }];
     await idbSetSetting(key, updated);
-    alert('Hozzáadva a bevásárlólistához.');
+    notify('Hozzáadva a bevásárlólistához.');
   };
 
   return (
@@ -912,7 +956,7 @@ function Products({ business, products, sales, categories, channels, onSave, onD
         {editing && (
           <div className="flex gap-2 mt-3">
             <button className="chip flex-1 flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={()=>duplicateProduct(editing)}><Icon name="layers" size={14} />Duplikálás</button>
-            <button className="chip flex-1 text-center" style={{color:'var(--danger)', background:'var(--bg)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Termék törlése</button>
+            <button className="chip flex-1 text-center" style={{color:'var(--danger)', background:'var(--bg)'}} onClick={async ()=>{ if (!(await confirmDialog(`Biztosan törlöd a(z) "${editing.name}" terméket?`))) return; onDelete(editing.id); setSheetOpen(false); }}>Termék törlése</button>
           </div>
         )}
       </BottomSheet>
@@ -1091,7 +1135,8 @@ function Finances({ business, products, sales, expenses, channels, expenseCatego
           <ExpenseForm initial={editing} categories={expenseCategories} onClose={()=>setSheetOpen(false)}
             onSave={(data)=>onSaveExpense({ id: editing?.id||uid(), businessId: business.id, ...data })} />
         )}
-        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={async ()=>{
+          if (!(await confirmDialog(`Biztosan törlöd ezt a(z) ${tab==='sales'?'bevételt':'kiadást'}?`))) return;
           tab==='sales' ? onDeleteSale(editing.id) : onDeleteExpense(editing.id); setSheetOpen(false);
         }}>Törlés</button>}
       </BottomSheet>
@@ -1411,7 +1456,7 @@ function Notes({ business, notes, onSave, onDelete }) {
           onSave({ id: editing?.id||uid(), businessId: business.id, date: editing?.date||todayISO(), text, pinned });
           setSheetOpen(false);
         }}>Mentés</button>
-        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Törlés</button>}
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={async ()=>{ if (!(await confirmDialog('Biztosan törlöd ezt a jegyzetet?'))) return; onDelete(editing.id); setSheetOpen(false); }}>Törlés</button>}
       </BottomSheet>
     </div>
   );
@@ -1486,7 +1531,7 @@ function Warehouse({ business, materials, onSave, onDelete }) {
       <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={editing ? 'Anyag szerkesztése' : 'Új anyag'}>
         <MaterialForm initial={editing} onClose={()=>setSheetOpen(false)}
           onSave={(data)=>onSave({ id: editing?.id || uid(), businessId: business.id, ...data })} />
-        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Anyag törlése</button>}
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={async ()=>{ if (!(await confirmDialog(`Biztosan törlöd a(z) "${editing.name}" anyagot a raktárból?`))) return; onDelete(editing.id); setSheetOpen(false); }}>Anyag törlése</button>}
       </BottomSheet>
     </div>
   );
@@ -1561,7 +1606,7 @@ function ShoppingList({ business, products }) {
                         {product.photos && product.photos[0] ? <img src={product.photos[0]} className="w-full h-full object-cover rounded-xl" /> : <Icon name="spool" size={16} />}
                       </div>
                       <div className="font-semibold text-sm truncate flex-1 min-w-0">{product.name}</div>
-                      <button className="icon-circle w-7 h-7 flex-shrink-0" style={{color:'var(--danger)'}} onClick={()=>removeItem(productId)}><Icon name="x" size={14} /></button>
+                      <button className="icon-circle w-7 h-7 flex-shrink-0" style={{color:'var(--danger)'}} onClick={async ()=>{ if (!(await confirmDialog(`Kiveszed a(z) "${product.name}" terméket a bevásárlólistából?`, 'Kivétel'))) return; removeItem(productId); }}><Icon name="x" size={14} /></button>
                     </div>
                     <div className="flex items-center justify-between gap-2 text-sm">
                       <span style={{color:'var(--text-dim)'}}>{fmtHUF(unitMaterialCost)} / db anyagköltség</span>
@@ -1837,7 +1882,7 @@ function Settings({ business, businesses, sales, expenses, products, channels, s
                 const arr=[...channels]; arr[i]={...c,fee:Number(e.target.value)}; setChannels(arr);
               }} />
               <span className="text-xs" style={{color:'var(--text-dim)'}}>%</span>
-              <button onClick={()=>setChannels(channels.filter((_,j)=>j!==i))} className="icon-circle w-7 h-7" style={{color:'var(--danger)'}}><Icon name="trash" size={14} /></button>
+              <button onClick={async ()=>{ if (!(await confirmDialog(`Biztosan törlöd a(z) "${c.name}" csatornát?`))) return; setChannels(channels.filter((_,j)=>j!==i)); }} className="icon-circle w-7 h-7" style={{color:'var(--danger)'}}><Icon name="trash" size={14} /></button>
             </div>
           ))}
         </div>
@@ -1850,7 +1895,7 @@ function Settings({ business, businesses, sales, expenses, products, channels, s
       <div className="card p-4">
         <div className="font-bold mb-2">Kiadás kategóriák</div>
         <div className="flex gap-2 flex-wrap mb-2">
-          {expenseCategories.map((c,i) => <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}><Icon name={CATEGORY_ICON[c]||'tag'} size={13} />{c} <button onClick={()=>setExpenseCategories(expenseCategories.filter((_,j)=>j!==i))}><Icon name="x" size={12} /></button></span>)}
+          {expenseCategories.map((c,i) => <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}><Icon name={CATEGORY_ICON[c]||'tag'} size={13} />{c} <button onClick={async ()=>{ if (!(await confirmDialog(`Biztosan törlöd a(z) "${c}" kategóriát?`))) return; setExpenseCategories(expenseCategories.filter((_,j)=>j!==i)); }}><Icon name="x" size={12} /></button></span>)}
         </div>
         <div className="flex gap-2">
           <input className="input" placeholder="Új kategória" value={newExpCat} onChange={e=>setNewExpCat(e.target.value)} />
@@ -1861,7 +1906,7 @@ function Settings({ business, businesses, sales, expenses, products, channels, s
       <div className="card p-4">
         <div className="font-bold mb-2">Termék kategóriák</div>
         <div className="flex gap-2 flex-wrap mb-2">
-          {productCategories.map((c,i) => <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}>{c} <button onClick={()=>setProductCategories(productCategories.filter((_,j)=>j!==i))}><Icon name="x" size={12} /></button></span>)}
+          {productCategories.map((c,i) => <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}>{c} <button onClick={async ()=>{ if (!(await confirmDialog(`Biztosan törlöd a(z) "${c}" kategóriát?`))) return; setProductCategories(productCategories.filter((_,j)=>j!==i)); }}><Icon name="x" size={12} /></button></span>)}
         </div>
         <div className="flex gap-2">
           <input className="input" placeholder="Új kategória" value={newProdCat} onChange={e=>setNewProdCat(e.target.value)} />
@@ -1943,29 +1988,39 @@ function App() {
 
   // Induláskor: DB betöltés + demó seedelés
   useEffect(() => {
+    // A tárhely-védelem kérése ne blokkolja a betöltést — néhány böngészőben ez lassú/akadozó
+    // lehet, és önmagában semmi mást nem befolyásol, csak a figyelmeztető sávot.
     (async () => {
-      try { if (navigator.storage && navigator.storage.persist) {
-        const persisted = await navigator.storage.persisted();
-        if (!persisted) { const granted = await navigator.storage.persist(); setUnprotected(!granted); }
-      } } catch(e){}
+      try {
+        if (navigator.storage && navigator.storage.persist) {
+          const persisted = await navigator.storage.persisted();
+          if (!persisted) { const granted = await navigator.storage.persist(); setUnprotected(!granted); }
+        }
+      } catch (e) {}
+    })();
 
+    (async () => {
       let biz = await idbGetAll('businesses');
       if (biz.length === 0) { await seedDemoBusiness(); biz = await idbGetAll('businesses'); }
       setBusinesses(biz);
 
-      let active = await idbGetSetting('activeBusinessId', null);
-      if (!active || !biz.find(b=>b.id===active)) active = biz[0].id;
-      setActiveId(active);
+      // A független beállítás-olvasásokat egyszerre indítjuk, nem egymás után várva rájuk —
+      // ez a betöltés leggyakoribb szűk keresztmetszete volt (5+ egymást követő IndexedDB kör).
+      const [active0, savedChannels, savedExpCats, savedProdCats, savedTheme, savedAutoBackup] = await Promise.all([
+        idbGetSetting('activeBusinessId', null),
+        idbGetSetting('channels', null),
+        idbGetSetting('expenseCategories', null),
+        idbGetSetting('productCategories', null),
+        idbGetSetting('theme', 'light'),
+        idbGetSetting('autoBackupEnabled', true),
+      ]);
 
-      const savedChannels = await idbGetSetting('channels', null);
+      const active = (active0 && biz.find(b=>b.id===active0)) ? active0 : biz[0].id;
+      setActiveId(active);
       if (savedChannels) setChannelsState(savedChannels);
-      const savedExpCats = await idbGetSetting('expenseCategories', null);
       if (savedExpCats) setExpenseCategoriesState(savedExpCats);
-      const savedProdCats = await idbGetSetting('productCategories', null);
       if (savedProdCats) setProductCategoriesState(savedProdCats);
-      const savedTheme = await idbGetSetting('theme', 'light');
       setThemeState(savedTheme);
-      const savedAutoBackup = await idbGetSetting('autoBackupEnabled', true);
       setAutoBackupState(savedAutoBackup);
 
       setReady(true);
@@ -2014,7 +2069,7 @@ function App() {
   const renameBiz = async (id, name) => { const b = businesses.find(x=>x.id===id); const updated = {...b, name}; await idbPut('businesses', updated); setBusinesses(bs=>bs.map(x=>x.id===id?updated:x)); };
   const setBizAvatar = async (id, avatar) => { const b = businesses.find(x=>x.id===id); const updated = {...b, avatar}; await idbPut('businesses', updated); setBusinesses(bs=>bs.map(x=>x.id===id?updated:x)); };
   const deleteBiz = async (b) => {
-    if (!window.confirm(`Biztosan törlöd a(z) "${b.name}" vállalkozást minden adatával együtt? Ez nem visszavonható.`)) return;
+    if (!(await confirmDialog(`Biztosan törlöd a(z) "${b.name}" vállalkozást minden adatával együtt?\nEz nem visszavonható.`))) return;
     await deleteBusinessCascade(b.id);
     const remaining = businesses.filter(x=>x.id!==b.id);
     setBusinesses(remaining);
@@ -2036,7 +2091,8 @@ function App() {
 
   const exportAll = async () => {
     const data = {};
-    for (const s of STORES) data[s] = await idbGetAll(s);
+    const results = await Promise.all(STORES.map(s => idbGetAll(s)));
+    STORES.forEach((s,i) => { data[s] = results[i]; });
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -2055,7 +2111,7 @@ function App() {
     })();
   }, [ready, autoBackup]);
   const importAll = async (file) => {
-    if (!window.confirm('A visszatöltés felülírja a jelenlegi összes adatot. Folytatod?')) return;
+    if (!(await confirmDialog('A visszatöltés felülírja a jelenlegi összes adatot.\nFolytatod?', 'Visszatöltés', false))) return;
     const text = await file.text();
     const data = JSON.parse(text);
     await idbClearAll();
@@ -2146,7 +2202,7 @@ function App() {
       {page === 'products' && <Products business={business} products={products} sales={sales} categories={productCategories} channels={channels} onSave={saveProduct} onDelete={deleteProduct} autoOpenNew={pendingTab==='new'} onAutoOpenHandled={()=>setPendingTab(null)} />}
       {page === 'finances' && <Finances business={business} products={products} sales={sales} expenses={expenses} channels={channels} expenseCategories={expenseCategories} onSaveSale={saveSale} onDeleteSale={deleteSale} onSaveExpense={saveExpense} onDeleteExpense={deleteExpense} initialTab={pendingTab} onAutoOpenHandled={()=>setPendingTab(null)} />}
       {page === 'stats' && <Stats sales={sales} expenses={expenses} channels={channels} expenseCategories={expenseCategories} products={products} />}
-      {page === 'calculator' && <Calculator channels={channels} products={products} onSavePreset={async (preset)=>{ await idbPut('priceCalcPresets', {...preset, businessId: business.id}); alert('Kalkuláció elmentve.'); }} onSaveToProduct={(p)=>{ saveProduct({ id: uid(), businessId: business.id, category: productCategories[0], stock:0, photos:[], createdAt: todayISO(), ...p }); setPage('products'); }} />}
+      {page === 'calculator' && <Calculator channels={channels} products={products} onSavePreset={async (preset)=>{ await idbPut('priceCalcPresets', {...preset, businessId: business.id}); notify('Kalkuláció elmentve.'); }} onSaveToProduct={(p)=>{ saveProduct({ id: uid(), businessId: business.id, category: productCategories[0], stock:0, photos:[], createdAt: todayISO(), ...p }); setPage('products'); }} />}
       {page === 'notes' && <Notes business={business} notes={notes} onSave={saveNote} onDelete={deleteNote} />}
       {page === 'shopping' && <ShoppingList business={business} products={products} />}
       {page === 'warehouse' && <Warehouse business={business} materials={materials} onSave={saveMaterial} onDelete={deleteMaterial} />}
@@ -2183,6 +2239,8 @@ function App() {
 
       <BusinessSwitcher open={switcherOpen} onClose={()=>setSwitcherOpen(false)} businesses={businesses} activeId={activeId}
         onSwitch={switchBusiness} onCreate={createBiz} onDelete={deleteBiz} onRename={renameBiz} onSetAvatar={setBizAvatar} />
+      <ConfirmHost />
+      <ToastHost />
     </div>
   );
 }
