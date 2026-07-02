@@ -79,6 +79,7 @@ const DEFAULT_CHANNELS = [
 const DEFAULT_EXPENSE_CATEGORIES = ['Anyag', 'Csomagolás', 'Posta', 'Hirdetés', 'Helypénz', 'Eszköz', 'Egyéb'];
 const DEFAULT_PRODUCT_CATEGORIES = ['Táska', 'Plüss', 'Kiegészítő', 'Egyéb'];
 const PAYMENT_METHODS = ['Készpénz', 'Utalás', 'Bankkártya', 'PayPal', 'Egyéb'];
+const MATERIAL_UNITS = ['db', 'm', 'cm', 'g', 'kg', 'l', 'ml', 'csomag', 'tekercs', 'gombolyag', 'pár'];
 const parseTags = str => (str||'').split(',').map(t=>t.trim()).filter(Boolean);
 
 /* ===================== SEGÉDFÜGGVÉNYEK ===================== */
@@ -615,10 +616,12 @@ function Dashboard({ business, products, sales, expenses, channels, onNav }) {
 }
 
 /* ===================== TERMÉKEK ===================== */
-function ProductForm({ initial, onSave, onClose, categories, channels }) {
+function ProductForm({ initial, onSave, onClose, categories, channels, onAddToShoppingList }) {
   const [form, setForm] = useState(initial || { name:'', category: categories[0], cost:'', price:'', stock:'', photos:[], materials:[], channelPrices:{}, prepHours:'', hourlyRate:'', growthPct:10 });
   const set = (k,v) => setForm(f => ({...f, [k]:v}));
   const fileRef = useRef(null);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   const addPhoto = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -680,60 +683,80 @@ function ProductForm({ initial, onSave, onClose, categories, channels }) {
       </div>
 
       <div className="card p-3">
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-semibold text-sm">Anyagköltség-lebontás</div>
-          <button className="chip" style={{background:'var(--bg)'}} onClick={addMaterial}>+ Anyag</button>
-        </div>
-        {materials.length === 0 ? (
-          <div className="text-xs" style={{color:'var(--text-dim)'}}>Add hozzá, milyen anyagok és mennyi kell ehhez a termékhez (pl. vászon, cipzár), hogy a bevásárlólistában is szerepelhessen.</div>
-        ) : (
-          <div className="space-y-3">
-            {materials.map((m,i) => (
-              <div key={i} className="rounded-2xl p-2.5" style={{background:'var(--bg)', border:'1px solid var(--border)'}}>
-                <div className="flex items-center gap-2 mb-2">
-                  <input className="input py-1.5 flex-1" placeholder="Anyag neve (pl. vászon)" value={m.name} onChange={e=>setMaterial(i,'name',e.target.value)} />
-                  <button className="icon-circle w-7 h-7 flex-shrink-0" style={{color:'var(--danger)'}} onClick={()=>removeMaterial(i)}><Icon name="x" size={14} /></button>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label>
-                    <input type="number" className="input py-1.5 mt-0.5" placeholder="1" value={m.qty} onChange={e=>setMaterial(i,'qty',e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Egység</label>
-                    <input className="input py-1.5 mt-0.5" placeholder="db / m / g" value={m.unit} onChange={e=>setMaterial(i,'unit',e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Ft / egység</label>
-                    <input type="number" className="input py-1.5 mt-0.5" placeholder="0" value={m.unitCost} onChange={e=>setMaterial(i,'unitCost',e.target.value)} />
-                  </div>
-                </div>
-                <div className="text-right text-xs mt-1.5" style={{color:'var(--text-dim)'}}>Részösszeg: <b style={{color:'var(--text)'}}>{fmtHUF((Number(m.qty)||0)*(Number(m.unitCost)||0))}</b></div>
-              </div>
-            ))}
-            <div className="flex items-center justify-between pt-1 text-sm">
-              <span style={{color:'var(--text-dim)'}}>Összes anyagköltség</span>
-              <div className="flex items-center gap-2">
-                <span className="font-bold">{fmtHUF(materialTotal)}</span>
-                <button className="chip" style={{background:'var(--peony)', color:'var(--cacao)'}} onClick={()=>set('cost', Math.round(materialTotal))}>Átveszem önköltségnek</button>
-              </div>
+        <button className="w-full flex items-center justify-between" onClick={()=>setMaterialsOpen(o=>!o)}>
+          <div className="flex items-center gap-2">
+            <Icon name={materialsOpen ? 'chevronDown' : 'chevronRight'} size={16} style={{color:'var(--text-dim)'}} />
+            <div className="font-semibold text-sm">Anyagköltség-lebontás</div>
+          </div>
+          {materials.length > 0 && <span className="text-xs font-bold" style={{color:'var(--text-dim)'}}>{fmtHUF(materialTotal)}</span>}
+        </button>
+        {materialsOpen && (
+          <div className="mt-3">
+            <div className="flex justify-end mb-2">
+              <button className="chip" style={{background:'var(--bg)'}} onClick={addMaterial}>+ Anyag</button>
             </div>
+            {materials.length === 0 ? (
+              <div className="text-xs" style={{color:'var(--text-dim)'}}>Add hozzá, milyen anyagok és mennyi kell ehhez a termékhez (pl. vászon, cipzár), hogy a bevásárlólistában is szerepelhessen.</div>
+            ) : (
+              <div className="space-y-3">
+                {materials.map((m,i) => (
+                  <div key={i} className="rounded-2xl p-2.5" style={{background:'var(--bg)', border:'1px solid var(--border)'}}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <input className="input py-1.5 flex-1" placeholder="Anyag neve (pl. vászon)" value={m.name} onChange={e=>setMaterial(i,'name',e.target.value)} />
+                      <button className="icon-circle w-7 h-7 flex-shrink-0" style={{color:'var(--danger)'}} onClick={()=>removeMaterial(i)}><Icon name="x" size={14} /></button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label>
+                        <input type="number" className="input py-1.5 mt-0.5" placeholder="1" value={m.qty} onChange={e=>setMaterial(i,'qty',e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Egység</label>
+                        <input className="input py-1.5 mt-0.5" placeholder="db / m / g" value={m.unit} onChange={e=>setMaterial(i,'unit',e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Ft / egység</label>
+                        <input type="number" className="input py-1.5 mt-0.5" placeholder="0" value={m.unitCost} onChange={e=>setMaterial(i,'unitCost',e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="text-right text-xs mt-1.5" style={{color:'var(--text-dim)'}}>Részösszeg: <b style={{color:'var(--text)'}}>{fmtHUF((Number(m.qty)||0)*(Number(m.unitCost)||0))}</b></div>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between pt-1 text-sm">
+                  <span style={{color:'var(--text-dim)'}}>Összes anyagköltség</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold">{fmtHUF(materialTotal)}</span>
+                    <button className="chip" style={{background:'var(--peony)', color:'var(--cacao)'}} onClick={()=>set('cost', Math.round(materialTotal))}>Átveszem önköltségnek</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       <div className="card p-3">
-        <div className="font-semibold text-sm mb-1">Készítés és óraber</div>
-        <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Mennyi idő és mekkora órabér mellett készül el egy darab — ebből számoljuk az ajánlott árakat.</div>
-        <div className="grid grid-cols-2 gap-2 mb-2">
-          <div><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Készítési idő (óra)</label><input type="number" className="input mt-0.5" value={form.prepHours} onChange={e=>set('prepHours', e.target.value)} placeholder="pl. 2" /></div>
-          <div><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Órabér (Ft)</label><input type="number" className="input mt-0.5" value={form.hourlyRate} onChange={e=>set('hourlyRate', e.target.value)} placeholder="pl. 4000" /></div>
-        </div>
-        <div className="mb-2"><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Vállalkozásfejlesztésre (%)</label><input type="number" className="input mt-0.5" value={form.growthPct} onChange={e=>set('growthPct', e.target.value)} /></div>
-        <div className="rounded-xl p-2.5 flex items-center justify-between text-sm" style={{background:'var(--bg)'}}>
-          <span style={{color:'var(--text-dim)'}}>Munkadíj (idő × órabér)</span>
-          <span className="font-bold">{fmtHUF(labor)}</span>
-        </div>
+        <button className="w-full flex items-center justify-between" onClick={()=>setPricingOpen(o=>!o)}>
+          <div className="flex items-center gap-2">
+            <Icon name={pricingOpen ? 'chevronDown' : 'chevronRight'} size={16} style={{color:'var(--text-dim)'}} />
+            <div className="font-semibold text-sm">Készítés és órabér</div>
+          </div>
+          {labor > 0 && <span className="text-xs font-bold" style={{color:'var(--text-dim)'}}>{fmtHUF(labor)}</span>}
+        </button>
+        {pricingOpen && (
+          <div className="mt-3">
+            <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Mennyi idő és mekkora órabér mellett készül el egy darab — ebből számoljuk az ajánlott árakat.</div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Készítési idő (óra)</label><input type="number" className="input mt-0.5" value={form.prepHours} onChange={e=>set('prepHours', e.target.value)} placeholder="pl. 2" /></div>
+              <div><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Órabér (Ft)</label><input type="number" className="input mt-0.5" value={form.hourlyRate} onChange={e=>set('hourlyRate', e.target.value)} placeholder="pl. 4000" /></div>
+            </div>
+            <div className="mb-2"><label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Vállalkozásfejlesztésre (%)</label><input type="number" className="input mt-0.5" value={form.growthPct} onChange={e=>set('growthPct', e.target.value)} /></div>
+            <div className="rounded-xl p-2.5 flex items-center justify-between text-sm" style={{background:'var(--bg)'}}>
+              <span style={{color:'var(--text-dim)'}}>Munkadíj (idő × órabér)</span>
+              <span className="font-bold">{fmtHUF(labor)}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="card p-3">
@@ -751,6 +774,12 @@ function ProductForm({ initial, onSave, onClose, categories, channels }) {
           ))}
         </div>
       </div>
+
+      {initial && materials.length > 0 && onAddToShoppingList && (
+        <button className="chip w-full flex items-center justify-center gap-1.5" style={{background:'var(--peony)', color:'var(--cacao)'}} onClick={()=>onAddToShoppingList(initial.id)}>
+          <Icon name="shoppingList" size={15} /> Hozzáadás a bevásárlólistához
+        </button>
+      )}
 
       <button className="btn-primary w-full py-3 rounded-2xl font-bold mt-2" onClick={() => {
         if (!form.name.trim()) return;
@@ -770,6 +799,15 @@ function Products({ business, products, sales, categories, channels, onSave, onD
 
   const filtered = filter==='Mind' ? products : products.filter(p=>p.category===filter);
   const soldQtyFor = (name) => sales.filter(s=>s.productName===name).reduce((a,s)=>a+(Number(s.qty)||0),0);
+
+  const addToShoppingList = async (productId) => {
+    const key = `shoppingList_${business.id}`;
+    const list = await idbGetSetting(key, []);
+    const existing = list.find(it=>it.productId===productId);
+    const updated = existing ? list.map(it=>it.productId===productId ? {...it, qty: it.qty+1} : it) : [...list, { productId, qty: 1 }];
+    await idbSetSetting(key, updated);
+    alert('Hozzáadva a bevásárlólistához.');
+  };
 
   return (
     <div className="fade-in p-4 pb-28 space-y-4">
@@ -800,7 +838,7 @@ function Products({ business, products, sales, categories, channels, onSave, onD
         </div>
       )}
       <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={editing ? 'Termék szerkesztése' : 'Új termék'}>
-        <ProductForm initial={editing} categories={categories} channels={channels} onClose={()=>setSheetOpen(false)}
+        <ProductForm initial={editing} categories={categories} channels={channels} onClose={()=>setSheetOpen(false)} onAddToShoppingList={addToShoppingList}
           onSave={(data)=>onSave({ id: editing?.id || uid(), businessId: business.id, createdAt: editing?.createdAt || todayISO(), ...data })} />
         {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Termék törlése</button>}
       </BottomSheet>
@@ -1314,7 +1352,11 @@ function MaterialForm({ initial, onSave, onClose }) {
       <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Anyag neve</label><input className="input mt-1" value={form.name} onChange={e=>set('name', e.target.value)} placeholder="pl. Vászon" /></div>
       <div className="grid grid-cols-3 gap-2">
         <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label><input type="number" className="input mt-1" value={form.qty} onChange={e=>set('qty', e.target.value)} /></div>
-        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Egység</label><input className="input mt-1" value={form.unit} onChange={e=>set('unit', e.target.value)} placeholder="db / m / g" /></div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Egység</label>
+          <select className="input mt-1" value={form.unit} onChange={e=>set('unit', e.target.value)}>
+            {MATERIAL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
         <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Ft / egység</label><input type="number" className="input mt-1" value={form.unitCost} onChange={e=>set('unitCost', e.target.value)} /></div>
       </div>
       <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={()=>{
