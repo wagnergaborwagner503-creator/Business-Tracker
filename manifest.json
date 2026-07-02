@@ -1,6 +1,6 @@
 {
   "name": "Business Tracker – Vállalkozás napló",
-  "short_name": "Biz Tracker",
+  "short_name": "Business Tracker",
   "description": "Termékek, bevételek, kiadások és árkalkuláció kézműves vállalkozásokhoz – helyi tárolással.",
   "start_url": "./",
   "scope": "./",

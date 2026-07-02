@@ -140,7 +140,15 @@ function idbOpen() {
         }
       });
     };
-    req.onsuccess = () => resolve(req.result);
+    // Ha egy régebbi lapon/fülön nyitva maradt egy korábbi verziójú kapcsolat, az blokkolná ezt a
+    // frissítést a végtelenségig (ez okozta, hogy frissítés után az app örökre a betöltő ikonon ragadt).
+    // Ezért minden sikeresen megnyitott kapcsolatot lezárunk, amint egy újabb verzió meg akarja nyitni.
+    req.onblocked = () => { console.warn('IndexedDB frissítés blokkolva — zárj be minden más megnyitott lapot ezzel az alkalmazással.'); };
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -314,12 +322,39 @@ function MonthNav({ month, onChange, allowAll, isAll, onAll }) {
 
 function BottomSheet({ open, onClose, title, children }) {
   useBackButton(open, onClose);
+  const [dragY, setDragY] = useState(0);
+  const draggingRef = useRef(false);
+  const startYRef = useRef(0);
+
+  useEffect(() => { if (!open) setDragY(0); }, [open]);
+
+  const onDragStart = (e) => {
+    startYRef.current = e.clientY;
+    draggingRef.current = true;
+    try { e.target.setPointerCapture(e.pointerId); } catch(err) {}
+  };
+  const onDragMove = (e) => {
+    if (!draggingRef.current) return;
+    const delta = e.clientY - startYRef.current;
+    if (delta > 0) setDragY(delta);
+  };
+  const onDragEnd = () => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    setDragY(y => { if (y > 120) { onClose(); } return 0; });
+  };
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40"></div>
-      <div className="sheet relative w-full max-w-md rounded-t-3xl p-5 pb-8 max-h-[88vh] overflow-y-auto" style={{background:'var(--surface)'}} onClick={e=>e.stopPropagation()}>
-        <div className="w-10 h-1.5 rounded-full mx-auto mb-4" style={{background:'var(--border)'}}></div>
+      <div className="absolute inset-0 bg-black/40" style={{opacity: Math.max(0, 1 - dragY/250)}}></div>
+      <div className="sheet relative w-full max-w-md rounded-t-3xl p-5 pb-8 max-h-[88vh] overflow-y-auto"
+        style={{background:'var(--surface)', transform: dragY ? `translateY(${dragY}px)` : undefined, transition: draggingRef.current ? 'none' : 'transform .25s ease'}}
+        onClick={e=>e.stopPropagation()}>
+        <div className="-mt-2 -mx-2 pt-2 pb-3 px-2 mb-2" style={{touchAction:'none', cursor:'grab'}}
+          onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
+          <div className="w-10 h-1.5 rounded-full mx-auto" style={{background:'var(--border)'}}></div>
+        </div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">{title}</h2>
           <button onClick={onClose} className="icon-circle w-8 h-8" style={{color:'var(--text-dim)', background:'var(--bg)'}}><Icon name="x" size={16} /></button>
@@ -443,9 +478,11 @@ function Icon({ name, size = 20, strokeWidth = 2, className = '', style }) {
 const CATEGORY_ICON = { 'Anyag':'tag', 'Csomagolás':'box', 'Posta':'truck', 'Hirdetés':'megaphone', 'Helypénz':'store', 'Eszköz':'wrench', 'Egyéb':'star' };
 
 /* ===================== VÁLLALKOZÁS VÁLTÓ ===================== */
-function BusinessSwitcher({ open, onClose, businesses, activeId, onSwitch, onCreate, onDelete, onRename }) {
+function BusinessSwitcher({ open, onClose, businesses, activeId, onSwitch, onCreate, onDelete, onRename, onSetAvatar }) {
   const [newName, setNewName] = useState('');
   const [renaming, setRenaming] = useState(null);
+  const avatarInputRef = useRef(null);
+  const avatarTargetRef = useRef(null);
 
   const sorted = [...businesses].sort((a,b) => {
     if (a.id===activeId) return -1;
@@ -453,15 +490,30 @@ function BusinessSwitcher({ open, onClose, businesses, activeId, onSwitch, onCre
     return a.name.localeCompare(b.name, 'hu');
   });
 
+  const pickAvatar = (businessId) => { avatarTargetRef.current = businessId; avatarInputRef.current.click(); };
+  const onAvatarFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !avatarTargetRef.current) return;
+    const dataUrl = await resizeImage(file, 300, 0.85);
+    onSetAvatar(avatarTargetRef.current, dataUrl);
+    e.target.value = '';
+  };
+
   return (
     <BottomSheet open={open} onClose={onClose} title="Vállalkozásaim">
+      <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFile} />
       <div className="space-y-2 mb-4">
         {sorted.map(b => (
           <div key={b.id} className="flex items-center gap-3 p-3 rounded-2xl" style={{
             background: b.id===activeId ? 'var(--cacao)' : 'var(--bg)',
             border: b.id===activeId ? 'none' : '1px solid var(--border)',
           }}>
-            <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center font-bold" style={{background:b.color, color:'#fff'}}>{b.name.trim().charAt(0).toUpperCase()}</div>
+            <button onClick={()=>pickAvatar(b.id)} className="relative w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center font-bold overflow-visible" style={{background:b.color, color:'#fff'}}>
+              <span className="w-full h-full rounded-full flex items-center justify-center overflow-hidden">
+                {b.avatar ? <img src={b.avatar} className="w-full h-full object-cover" /> : b.name.trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="absolute -bottom-0.5 -right-0.5 icon-circle w-4 h-4" style={{background:'var(--surface)', color:'var(--text-dim)', border:'1px solid var(--border)'}}><Icon name="camera" size={9} /></span>
+            </button>
             <div className="flex-1 min-w-0" onClick={() => { onSwitch(b.id); onClose(); }}>
               {renaming === b.id ? (
                 <input autoFocus className="input py-1" style={{color:'var(--text)', background:'var(--surface)'}} defaultValue={b.name}
@@ -622,6 +674,7 @@ function ProductForm({ initial, onSave, onClose, categories, channels, onAddToSh
   const fileRef = useRef(null);
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
+  const [pricesOpen, setPricesOpen] = useState(false);
 
   const addPhoto = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -760,19 +813,28 @@ function ProductForm({ initial, onSave, onClose, categories, channels, onAddToSh
       </div>
 
       <div className="card p-3">
-        <div className="font-semibold text-sm mb-1">Ajánlott ár csatornánként</div>
-        <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Anyagköltség ({fmtHUF(effectiveMaterialCost)}) + munkadíj alapján számolt ajánlás. Ha beírsz egy végleges árat, abból visszaszámoljuk az órabért.</div>
-        <div className="space-y-2">
-          {channels.map(c => (
-            <div key={c.id} className="rounded-xl p-2.5" style={{background:'var(--bg)'}}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-semibold truncate">{c.name} <span className="text-xs font-normal" style={{color:'var(--text-dim)'}}>({c.fee}%)</span></span>
-                <span className="text-sm" style={{color:PALETTE.grass}}>Ajánlott: <b>{fmtHUF(suggestedPriceFor(c.fee))}</b></span>
-              </div>
-              <input type="number" className="input py-1.5" placeholder="Végleges ár…" value={(form.channelPrices||{})[c.id] ?? ''} onChange={e=>setChannelPrice(c.id, c.fee, e.target.value)} />
+        <button className="w-full flex items-center justify-between" onClick={()=>setPricesOpen(o=>!o)}>
+          <div className="flex items-center gap-2">
+            <Icon name={pricesOpen ? 'chevronDown' : 'chevronRight'} size={16} style={{color:'var(--text-dim)'}} />
+            <div className="font-semibold text-sm">Ajánlott ár csatornánként</div>
+          </div>
+        </button>
+        {pricesOpen && (
+          <div className="mt-3">
+            <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Anyagköltség ({fmtHUF(effectiveMaterialCost)}) + munkadíj alapján számolt ajánlás. Ha beírsz egy végleges árat, abból visszaszámoljuk az órabért.</div>
+            <div className="space-y-2">
+              {channels.map(c => (
+                <div key={c.id} className="rounded-xl p-2.5" style={{background:'var(--bg)'}}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-semibold truncate">{c.name} <span className="text-xs font-normal" style={{color:'var(--text-dim)'}}>({c.fee}%)</span></span>
+                    <span className="text-sm" style={{color:PALETTE.grass}}>Ajánlott: <b>{fmtHUF(suggestedPriceFor(c.fee))}</b></span>
+                  </div>
+                  <input type="number" className="input py-1.5" placeholder="Végleges ár…" value={(form.channelPrices||{})[c.id] ?? ''} onChange={e=>setChannelPrice(c.id, c.fee, e.target.value)} />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
 
       {initial && materials.length > 0 && onAddToShoppingList && (
@@ -799,6 +861,12 @@ function Products({ business, products, sales, categories, channels, onSave, onD
 
   const filtered = filter==='Mind' ? products : products.filter(p=>p.category===filter);
   const soldQtyFor = (name) => sales.filter(s=>s.productName===name).reduce((a,s)=>a+(Number(s.qty)||0),0);
+
+  const duplicateProduct = (p) => {
+    const copy = { ...p, id: uid(), name: `${p.name} (másolat)`, createdAt: todayISO() };
+    onSave(copy);
+    setEditing(copy);
+  };
 
   const addToShoppingList = async (productId) => {
     const key = `shoppingList_${business.id}`;
@@ -838,9 +906,14 @@ function Products({ business, products, sales, categories, channels, onSave, onD
         </div>
       )}
       <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={editing ? 'Termék szerkesztése' : 'Új termék'}>
-        <ProductForm initial={editing} categories={categories} channels={channels} onClose={()=>setSheetOpen(false)} onAddToShoppingList={addToShoppingList}
+        <ProductForm key={editing?.id || 'new'} initial={editing} categories={categories} channels={channels} onClose={()=>setSheetOpen(false)} onAddToShoppingList={addToShoppingList}
           onSave={(data)=>onSave({ id: editing?.id || uid(), businessId: business.id, createdAt: editing?.createdAt || todayISO(), ...data })} />
-        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Termék törlése</button>}
+        {editing && (
+          <div className="flex gap-2 mt-3">
+            <button className="chip flex-1 flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={()=>duplicateProduct(editing)}><Icon name="layers" size={14} />Duplikálás</button>
+            <button className="chip flex-1 text-center" style={{color:'var(--danger)', background:'var(--bg)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Termék törlése</button>
+          </div>
+        )}
       </BottomSheet>
     </div>
   );
@@ -1725,7 +1798,7 @@ function ExcelImport({ business, channels, sales, expenses, products, expenseCat
 }
 
 /* ===================== BEÁLLÍTÁSOK ===================== */
-function Settings({ business, businesses, sales, expenses, products, channels, setChannels, expenseCategories, setExpenseCategories, productCategories, setProductCategories, theme, setTheme, onExportAll, onImportAll, onExportExcel, storageInfo, onOpenBusinessSwitcher }) {
+function Settings({ business, businesses, sales, expenses, products, channels, setChannels, expenseCategories, setExpenseCategories, productCategories, setProductCategories, theme, setTheme, autoBackup, setAutoBackup, onExportAll, onImportAll, onExportExcel, storageInfo, onOpenBusinessSwitcher }) {
   const [importOpen, setImportOpen] = useState(false);
   const importFileRef = useRef(null);
   const [newChannel, setNewChannel] = useState('');
@@ -1804,6 +1877,15 @@ function Settings({ business, businesses, sales, expenses, products, channels, s
       <div className="card p-4">
         <div className="font-bold mb-2">Adatmentés</div>
         <p className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Tárhely: {storageInfo}. Rendszeresen készíts JSON mentést, hogy az adatok böngésző-ürítés esetén se vesszenek el.</p>
+        <div className="flex items-center justify-between p-2.5 rounded-xl mb-2" style={{background:'var(--bg)'}}>
+          <div className="pr-2">
+            <div className="text-sm font-semibold">Automatikus napi JSON mentés</div>
+            <div className="text-xs" style={{color:'var(--text-dim)'}}>Naponta egyszer, az app megnyitásakor automatikusan letölt egy biztonsági mentést.</div>
+          </div>
+          <button onClick={()=>setAutoBackup(a=>!a)} className="flex-shrink-0 w-12 h-7 rounded-full relative transition" style={{background: autoBackup?'var(--cacao)':'var(--border)'}}>
+            <span className="absolute top-0.5 w-6 h-6 rounded-full bg-white transition" style={{left: autoBackup?'22px':'2px'}}></span>
+          </button>
+        </div>
         <div className="flex gap-2 mb-2">
           <button className="chip flex-1 flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={onExportAll}><Icon name="download" size={14} />JSON mentés</button>
           <button className="chip flex-1 flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={()=>importFileRef.current.click()}><Icon name="upload" size={14} />Visszatöltés</button>
@@ -1834,6 +1916,7 @@ function App() {
   const [expenseCategories, setExpenseCategoriesState] = useState(DEFAULT_EXPENSE_CATEGORIES);
   const [productCategories, setProductCategoriesState] = useState(DEFAULT_PRODUCT_CATEGORIES);
   const [theme, setThemeState] = useState('light');
+  const [autoBackup, setAutoBackupState] = useState(true);
   const [page, setPageState] = useState('dashboard');
   const homeHandlerRef = useRef(null);
   useEffect(() => {
@@ -1855,6 +1938,7 @@ function App() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [storageInfo, setStorageInfo] = useState('...');
   const [unprotected, setUnprotected] = useState(false);
+  const [loadStuck, setLoadStuck] = useState(false);
 
   // Induláskor: DB betöltés + demó seedelés
   useEffect(() => {
@@ -1880,15 +1964,26 @@ function App() {
       if (savedProdCats) setProductCategoriesState(savedProdCats);
       const savedTheme = await idbGetSetting('theme', 'light');
       setThemeState(savedTheme);
+      const savedAutoBackup = await idbGetSetting('autoBackupEnabled', true);
+      setAutoBackupState(savedAutoBackup);
 
       setReady(true);
     })();
   }, []);
 
+  // Ha valamiért (pl. egy másik nyitott lap régi verziója blokkolja az adatbázis-frissítést)
+  // túl sokáig tartana a betöltés, ne ragadjon örökre a töltő ikonon — mutassunk hibaüzenetet.
+  useEffect(() => {
+    if (ready) return;
+    const t = setTimeout(() => setLoadStuck(true), 6000);
+    return () => clearTimeout(t);
+  }, [ready]);
+
   useEffect(() => { document.documentElement.classList.toggle('dark', theme === 'dark'); if (ready) idbSetSetting('theme', theme); }, [theme, ready]);
   useEffect(() => { if (ready) idbSetSetting('channels', channels); }, [channels, ready]);
   useEffect(() => { if (ready) idbSetSetting('expenseCategories', expenseCategories); }, [expenseCategories, ready]);
   useEffect(() => { if (ready) idbSetSetting('productCategories', productCategories); }, [productCategories, ready]);
+  useEffect(() => { if (ready) idbSetSetting('autoBackupEnabled', autoBackup); }, [autoBackup, ready]);
 
   const reloadBusinessData = useCallback(async (businessId) => {
     if (!businessId) return;
@@ -1916,6 +2011,7 @@ function App() {
   const switchBusiness = (id) => { setActiveId(id); idbSetSetting('activeBusinessId', id); setPage('dashboard'); };
   const createBiz = async (name) => { const b = await createBusiness(name); setBusinesses(bs=>[...bs,b]); switchBusiness(b.id); };
   const renameBiz = async (id, name) => { const b = businesses.find(x=>x.id===id); const updated = {...b, name}; await idbPut('businesses', updated); setBusinesses(bs=>bs.map(x=>x.id===id?updated:x)); };
+  const setBizAvatar = async (id, avatar) => { const b = businesses.find(x=>x.id===id); const updated = {...b, avatar}; await idbPut('businesses', updated); setBusinesses(bs=>bs.map(x=>x.id===id?updated:x)); };
   const deleteBiz = async (b) => {
     if (!window.confirm(`Biztosan törlöd a(z) "${b.name}" vállalkozást minden adatával együtt? Ez nem visszavonható.`)) return;
     await deleteBusinessCascade(b.id);
@@ -1946,6 +2042,17 @@ function App() {
     a.download = `business-tracker-mentes-${todayISO()}.json`;
     a.click();
   };
+
+  // Automatikus napi JSON mentés: naponta legfeljebb egyszer, alapból bekapcsolva.
+  useEffect(() => {
+    if (!ready || !autoBackup) return;
+    (async () => {
+      const lastDate = await idbGetSetting('lastAutoBackupDate', null);
+      if (lastDate === todayISO()) return;
+      await exportAll();
+      await idbSetSetting('lastAutoBackupDate', todayISO());
+    })();
+  }, [ready, autoBackup]);
   const importAll = async (file) => {
     if (!window.confirm('A visszatöltés felülírja a jelenlegi összes adatot. Folytatod?')) return;
     const text = await file.text();
@@ -1991,7 +2098,19 @@ function App() {
   };
 
   if (!ready || !activeId) {
-    return <div className="min-h-screen flex items-center justify-center" style={{background:'var(--bg)'}}><div className="spinner"></div></div>;
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center" style={{background:'var(--bg)'}}>
+        <div className="spinner"></div>
+        {loadStuck && (
+          <>
+            <div className="text-sm max-w-xs" style={{color:'var(--text-dim)'}}>
+              A betöltés a szokásosnál tovább tart. Ha másik lapon/fülön is nyitva van ez az alkalmazás, zárd be azt, majd töltsd újra ezt az oldalt.
+            </div>
+            <button className="btn-primary rounded-2xl px-5 py-2.5 font-bold" onClick={()=>window.location.reload()}>Újratöltés</button>
+          </>
+        )}
+      </div>
+    );
   }
 
   const business = businesses.find(b=>b.id===activeId);
@@ -2009,7 +2128,9 @@ function App() {
       )}
       <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-3" style={{background:'var(--bg)'}}>
         <button onClick={()=>setSwitcherOpen(true)} className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold" style={{background:business.color}}>{business.name.trim().charAt(0).toUpperCase()}</div>
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold overflow-hidden" style={{background:business.color}}>
+            {business.avatar ? <img src={business.avatar} className="w-full h-full object-cover" /> : business.name.trim().charAt(0).toUpperCase()}
+          </div>
           <div className="text-left">
             <div className="text-xs" style={{color:'var(--text-dim)'}}>Szia!</div>
             <div className="font-bold truncate max-w-[160px] flex items-center gap-1">{business.name}<Icon name="chevronDown" size={14} /></div>
@@ -2028,7 +2149,7 @@ function App() {
       {page === 'notes' && <Notes business={business} notes={notes} onSave={saveNote} onDelete={deleteNote} />}
       {page === 'shopping' && <ShoppingList business={business} products={products} />}
       {page === 'warehouse' && <Warehouse business={business} materials={materials} onSave={saveMaterial} onDelete={deleteMaterial} />}
-      {page === 'settings' && <Settings business={business} businesses={businesses} sales={sales} expenses={expenses} products={products} channels={channels} setChannels={setChannelsState} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategoriesState} productCategories={productCategories} setProductCategories={setProductCategoriesState} theme={theme} setTheme={setThemeState} onExportAll={exportAll} onImportAll={importAll} onExportExcel={exportExcel} storageInfo={storageInfo} onOpenBusinessSwitcher={()=>setSwitcherOpen(true)} />}
+      {page === 'settings' && <Settings business={business} businesses={businesses} sales={sales} expenses={expenses} products={products} channels={channels} setChannels={setChannelsState} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategoriesState} productCategories={productCategories} setProductCategories={setProductCategoriesState} theme={theme} setTheme={setThemeState} autoBackup={autoBackup} setAutoBackup={setAutoBackupState} onExportAll={exportAll} onImportAll={importAll} onExportExcel={exportExcel} storageInfo={storageInfo} onOpenBusinessSwitcher={()=>setSwitcherOpen(true)} />}
       {page === 'more' && (
         <div className="fade-in p-4 pb-28 space-y-3">
           <h1 className="text-2xl font-extrabold mb-2">Több</h1>
@@ -2060,7 +2181,7 @@ function App() {
       </div>
 
       <BusinessSwitcher open={switcherOpen} onClose={()=>setSwitcherOpen(false)} businesses={businesses} activeId={activeId}
-        onSwitch={switchBusiness} onCreate={createBiz} onDelete={deleteBiz} onRename={renameBiz} />
+        onSwitch={switchBusiness} onCreate={createBiz} onDelete={deleteBiz} onRename={renameBiz} onSetAvatar={setBizAvatar} />
     </div>
   );
 }
