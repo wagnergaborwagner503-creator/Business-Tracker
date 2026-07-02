@@ -1,0 +1,1894 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Business Tracker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#6B403B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icon.svg">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+<style>
+  :root{
+    --peony:#F7DDD5; --dusty:#D8A4AF; --cacao:#6B403B; --lavender:#CCC3D1;
+    --leaf:#C1BC77; --grass:#8D8B4C; --jungle:#65613F; --sky:#AFB8CD;
+    --bg:#FBF3F0; --surface:#FFFFFF; --text:#3E2723; --text-dim:#8A6F68;
+    --border:#EFDCD6; --accent:var(--cacao); --danger:#B5493F;
+  }
+  html.dark{
+    --bg:#2A1F1C; --surface:#3A2C27; --text:#F7EDE9; --text-dim:#C9AFA8;
+    --border:#4C3B34; --accent:var(--dusty); --danger:#E08A80;
+  }
+  *{ -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  html,body{ height:100%; }
+  body{
+    background:var(--bg); color:var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    overscroll-behavior-y: none;
+  }
+  ::-webkit-scrollbar{ width:6px; height:6px; }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:3px; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:24px; box-shadow: 0 2px 14px rgba(107,64,59,.06); }
+  .btn-primary{ background:var(--cacao); color:#fff; }
+  .btn-primary:active{ transform: scale(.97); }
+  .input{
+    background:var(--bg); border:1px solid var(--border); color:var(--text);
+    border-radius:14px; padding:10px 14px; width:100%; outline:none;
+  }
+  .input:focus{ border-color:var(--accent); }
+  .chip{ border-radius:999px; padding:6px 14px; font-size:13px; font-weight:600; }
+  .fade-in{ animation: fadeIn .25s ease; }
+  @keyframes fadeIn{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
+  .sheet{ animation: slideUp .22s ease; }
+  @keyframes slideUp{ from{transform:translateY(100%)} to{transform:translateY(0)} }
+  .icon-circle{ display:inline-flex; align-items:center; justify-content:center; border-radius:999px; flex-shrink:0; }
+  .wallet-band{ border-radius:24px; box-shadow: 0 6px 16px rgba(0,0,0,.08); }
+  .quick-tile{ border-radius:18px; padding:12px 8px; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .nav-pill{ border-radius:999px; box-shadow: 0 8px 24px rgba(107,64,59,.18); }
+  .spinner{ width:34px; height:34px; border-radius:999px; border:3px solid var(--border); border-top-color:var(--cacao); animation: spin .8s linear infinite; }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+/* ===================== KONSTANSOK ===================== */
+const PALETTE = { peony:'#F7DDD5', dusty:'#D8A4AF', cacao:'#6B403B', lavender:'#CCC3D1', leaf:'#C1BC77', grass:'#8D8B4C', jungle:'#65613F', sky:'#AFB8CD' };
+const CHART_COLORS = [PALETTE.dusty, PALETTE.sky, PALETTE.leaf, PALETTE.grass, PALETTE.lavender, PALETTE.cacao, PALETTE.jungle, PALETTE.peony];
+
+const DEFAULT_CHANNELS = [
+  { id:'own_shop', name:'Saját webshop', fee:0 },
+  { id:'shopify', name:'Shopify', fee:2.9 },
+  { id:'etsy', name:'Etsy', fee:12.7 },
+  { id:'meska', name:'Meska', fee:12.7 },
+  { id:'market', name:'Vásár / helyi piac', fee:0 },
+  { id:'social', name:'Saját / Instagram / Facebook', fee:0 },
+];
+const DEFAULT_EXPENSE_CATEGORIES = ['Anyag', 'Csomagolás', 'Posta', 'Hirdetés', 'Helypénz', 'Eszköz', 'Egyéb'];
+const DEFAULT_PRODUCT_CATEGORIES = ['Táska', 'Plüss', 'Kiegészítő', 'Egyéb'];
+const PAYMENT_METHODS = ['Készpénz', 'Utalás', 'Bankkártya', 'PayPal', 'Egyéb'];
+const parseTags = str => (str||'').split(',').map(t=>t.trim()).filter(Boolean);
+
+/* ===================== SEGÉDFÜGGVÉNYEK ===================== */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const pad = n => String(n).padStart(2, '0');
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const monthKey = iso => (iso || '').slice(0, 7);
+const fmtHUF = n => (Math.round(Number(n) || 0)).toLocaleString('hu-HU') + ' Ft';
+const fmtDate = iso => { if (!iso) return ''; const [y,m,d] = iso.split('-'); return `${y}. ${m}. ${d}.`; };
+const HU_MONTHS = ['jan.','febr.','márc.','ápr.','máj.','jún.','júl.','aug.','szept.','okt.','nov.','dec.'];
+const fmtMonth = key => { const [y,m] = key.split('-').map(Number); return `${HU_MONTHS[m-1]} ${y}`; };
+const excelDateToISO = serial => {
+  if (typeof serial !== 'number') return null;
+  const utc = Math.round((serial - 25569) * 86400 * 1000);
+  const d = new Date(utc);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+};
+
+function resizeImage(file, maxDim = 900, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDim) { height = height * (maxDim / width); width = maxDim; }
+        else if (height > maxDim) { width = width * (maxDim / height); height = maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ===================== INDEXEDDB RÉTEG ===================== */
+const DB_NAME = 'business_tracker_db';
+const DB_VERSION = 1;
+const STORES = ['businesses', 'products', 'sales', 'expenses', 'notes', 'priceCalcPresets', 'settings'];
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('businesses')) db.createObjectStore('businesses', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
+      ['products', 'sales', 'expenses', 'notes', 'priceCalcPresets'].forEach(name => {
+        if (!db.objectStoreNames.contains(name)) {
+          const s = db.createObjectStore(name, { keyPath: 'id' });
+          s.createIndex('businessId', 'businessId', { unique: false });
+        }
+      });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+let dbPromise = null;
+const getDB = () => dbPromise || (dbPromise = idbOpen());
+
+async function idbGetAll(store) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGetAllByBusiness(store, businessId) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const idx = db.transaction(store, 'readonly').objectStore(store).index('businessId');
+    const req = idx.getAll(businessId);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbPut(store, value) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite');
+    tx.objectStore(store).put(value);
+    tx.oncomplete = () => resolve(value);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbDelete(store, id) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite');
+    tx.objectStore(store).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbDeleteByBusiness(store, businessId) {
+  const items = await idbGetAllByBusiness(store, businessId);
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite');
+    const os = tx.objectStore(store);
+    items.forEach(it => os.delete(it.id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbGetSetting(key, fallback) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('settings', 'readonly').objectStore('settings').get(key);
+    req.onsuccess = () => resolve(req.result ? req.result.value : fallback);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSetSetting(key, value) { return idbPut('settings', { key, value }); }
+async function idbClearAll() {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES, 'readwrite');
+    STORES.forEach(s => tx.objectStore(s).clear());
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/* ===================== DEMÓ ADATOK ===================== */
+async function seedDemoBusiness() {
+  const businessId = 'demo';
+  await idbPut('businesses', { id: businessId, name: 'Demó – Táska Műhely', color: PALETTE.dusty, isDemo: true, createdAt: todayISO() });
+
+  const products = [
+    { id: uid(), businessId, name: 'Sárkány mintás vászontáska', category: 'Táska', cost: 3200, price: 9500, stock: 4, photos: [], createdAt: todayISO(),
+      materials: [{name:'Vászon', qty:1.2, unit:'m', unitCost:2200},{name:'Cipzár', qty:1, unit:'db', unitCost:400},{name:'Vállpánt', qty:2, unit:'db', unitCost:150}],
+      channelPrices: { etsy: 10500 } },
+    { id: uid(), businessId, name: 'Mini hátizsák – Nyuszi', category: 'Táska', cost: 4100, price: 11900, stock: 2, photos: [], createdAt: todayISO(),
+      materials: [{name:'Plüss anyag', qty:0.8, unit:'m', unitCost:3500},{name:'Töltőanyag', qty:150, unit:'g', unitCost:3},{name:'Cipzár', qty:1, unit:'db', unitCost:400}] },
+    { id: uid(), businessId, name: 'Pingvin kulcstartó', category: 'Kiegészítő', cost: 650, price: 2200, stock: 9, photos: [], createdAt: todayISO(),
+      materials: [{name:'Plüss anyag', qty:0.1, unit:'m', unitCost:3500},{name:'Töltőanyag', qty:20, unit:'g', unitCost:3},{name:'Kulcskarika', qty:1, unit:'db', unitCost:100}] },
+    { id: uid(), businessId, name: 'Nagy shopper táska – Levendula', category: 'Táska', cost: 3800, price: 10500, stock: 1, photos: [], createdAt: todayISO(),
+      materials: [{name:'Vászon', qty:1.5, unit:'m', unitCost:2200},{name:'Vállpánt', qty:2, unit:'db', unitCost:150}] },
+  ];
+  for (const p of products) await idbPut('products', p);
+
+  const today = new Date();
+  const iso = (daysAgo) => { const d = new Date(today); d.setDate(d.getDate() - daysAgo); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+  const sales = [
+    { id: uid(), businessId, date: iso(2), productName: 'Sárkány mintás vászontáska', qty: 1, unitPrice: 9500, channelId: 'etsy', fee: 12.7, paymentMethod:'PayPal', tags:['visszatérő vevő'], note:'' },
+    { id: uid(), businessId, date: iso(5), productName: 'Pingvin kulcstartó', qty: 3, unitPrice: 2200, channelId: 'market', fee: 0, paymentMethod:'Készpénz', tags:['vásár'], note:'Győrújfalui vásár' },
+    { id: uid(), businessId, date: iso(9), productName: 'Mini hátizsák – Nyuszi', qty: 1, unitPrice: 11900, channelId: 'own_shop', fee: 0, paymentMethod:'Utalás', tags:[], note:'' },
+    { id: uid(), businessId, date: iso(15), productName: 'Nagy shopper táska – Levendula', qty: 1, unitPrice: 10500, channelId: 'meska', fee: 12.7, paymentMethod:'Bankkártya', tags:[], note:'' },
+    { id: uid(), businessId, date: iso(22), productName: 'Sárkány mintás vászontáska', qty: 2, unitPrice: 9500, channelId: 'social', fee: 0, paymentMethod:'Utalás', tags:['akció'], note:'' },
+    { id: uid(), businessId, date: iso(33), productName: 'Pingvin kulcstartó', qty: 2, unitPrice: 2200, channelId: 'etsy', fee: 12.7, paymentMethod:'PayPal', tags:[], note:'' },
+  ];
+  for (const s of sales) {
+    const gross = s.qty * s.unitPrice;
+    s.net = Math.round(gross * (1 - s.fee / 100));
+    s.commissionAmount = gross - s.net;
+    await idbPut('sales', s);
+  }
+
+  const expenses = [
+    { id: uid(), businessId, date: iso(28), category: 'Anyag', description: 'Vászon és cipzár – Rea Tex', amount: 15600, paymentMethod:'Bankkártya', tags:[], note:'' },
+    { id: uid(), businessId, date: iso(20), category: 'Csomagolás', description: 'Dobozok, matricák', amount: 4200, paymentMethod:'Készpénz', tags:[], note:'' },
+    { id: uid(), businessId, date: iso(18), category: 'Posta', description: 'MPL csomagfeladás', amount: 3100, paymentMethod:'Készpénz', tags:[], note:'' },
+    { id: uid(), businessId, date: iso(10), category: 'Hirdetés', description: 'Instagram hirdetés', amount: 5000, paymentMethod:'Bankkártya', tags:['kampány'], note:'' },
+    { id: uid(), businessId, date: iso(6), category: 'Anyag', description: 'Fonal, gombok', amount: 8900, paymentMethod:'Utalás', tags:[], note:'' },
+  ];
+  for (const e of expenses) await idbPut('expenses', e);
+
+  const notes = [
+    { id: uid(), businessId, date: todayISO(), text: 'Rendelni kell még levendula színű vásznat a shopper táskákhoz.', pinned: true },
+    { id: uid(), businessId, date: iso(4), text: 'Karácsonyi vásárra jelentkezni december elejéig.', pinned: false },
+  ];
+  for (const n of notes) await idbPut('notes', n);
+
+  return businessId;
+}
+
+/* ===================== ÚJ VÁLLALKOZÁS SABLON ===================== */
+async function createBusiness(name) {
+  const business = { id: uid(), name, color: CHART_COLORS[Math.floor(Math.random()*CHART_COLORS.length)], isDemo: false, createdAt: todayISO() };
+  await idbPut('businesses', business);
+  return business;
+}
+async function deleteBusinessCascade(businessId) {
+  await Promise.all(['products','sales','expenses','notes','priceCalcPresets'].map(s => idbDeleteByBusiness(s, businessId)));
+  await idbDelete('businesses', businessId);
+}
+
+/* ===================== ÚJRAFELHASZNÁLHATÓ UI ===================== */
+function IconBtn({ onClick, children, className='' }) {
+  return <button onClick={onClick} className={`w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition ${className}`} style={{background:'var(--bg)'}}>{children}</button>;
+}
+
+function daysInMonth(monthStr) { const [y,m] = monthStr.split('-').map(Number); return new Date(y, m, 0).getDate(); }
+function shiftMonth(monthStr, delta) { const [y,m] = monthStr.split('-').map(Number); const d = new Date(y, m-1+delta, 1); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; }
+
+function MonthNav({ month, onChange, allowAll, isAll, onAll }) {
+  return (
+    <div className="flex items-center gap-2">
+      {allowAll && (
+        <button className="chip flex-shrink-0" style={{background: isAll?'var(--cacao)':'var(--bg)', color: isAll?'#fff':'var(--text)'}} onClick={onAll}>Összes</button>
+      )}
+      {!isAll && (
+        <div className="flex items-center gap-1 flex-1 card px-1 py-1">
+          <button className="icon-circle w-9 h-9 flex-shrink-0" style={{color:'var(--text-dim)'}} onClick={()=>onChange(shiftMonth(month,-1))}><Icon name="chevronLeft" size={16} /></button>
+          <div className="flex-1 text-center font-bold text-sm">{fmtMonth(month)}</div>
+          <button className="icon-circle w-9 h-9 flex-shrink-0" style={{color:'var(--text-dim)'}} onClick={()=>onChange(shiftMonth(month,1))}><Icon name="chevronRight" size={16} /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BottomSheet({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40"></div>
+      <div className="sheet relative w-full max-w-md rounded-t-3xl p-5 pb-8 max-h-[88vh] overflow-y-auto" style={{background:'var(--surface)'}} onClick={e=>e.stopPropagation()}>
+        <div className="w-10 h-1.5 rounded-full mx-auto mb-4" style={{background:'var(--border)'}}></div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold">{title}</h2>
+          <button onClick={onClose} className="icon-circle w-8 h-8" style={{color:'var(--text-dim)', background:'var(--bg)'}}><Icon name="x" size={16} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub, color }) {
+  return (
+    <div className="card p-4 flex-1 min-w-[140px]">
+      <div className="text-xs font-semibold mb-1" style={{color:'var(--text-dim)'}}>{label}</div>
+      <div className="text-xl font-extrabold" style={{color: color || 'var(--text)'}}>{value}</div>
+      {sub && <div className="text-xs mt-1" style={{color:'var(--text-dim)'}}>{sub}</div>}
+    </div>
+  );
+}
+
+function EmptyState({ icon, text }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-14 text-center opacity-70">
+      <div className="icon-circle w-14 h-14 mb-3" style={{background:'var(--bg)', color:'var(--text-dim)'}}><Icon name={icon} size={26} /></div>
+      <div className="text-sm" style={{color:'var(--text-dim)'}}>{text}</div>
+    </div>
+  );
+}
+
+function ChartCanvas({ type, data, options, height=200 }) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    chartRef.current = new Chart(ref.current.getContext('2d'), { type, data, options });
+    return () => chartRef.current && chartRef.current.destroy();
+  }, [JSON.stringify(data), type]);
+  return <div style={{height}}><canvas ref={ref}></canvas></div>;
+}
+
+/* ===================== IKONOK (vonalas, emoji nélkül) ===================== */
+function Icon({ name, size = 20, strokeWidth = 2, className = '', style }) {
+  const p = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth, strokeLinecap: 'round', strokeLinejoin: 'round', className, style };
+  switch (name) {
+    case 'home': return <svg {...p}><path d="M4 11.5L12 4l8 7.5" /><path d="M6 10v9a1 1 0 0 0 1 1h3v-5a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v5h3a1 1 0 0 0 1-1v-9" /></svg>;
+    case 'box': return <svg {...p}><path d="M21 8l-9-5-9 5 9 5 9-5z" /><path d="M3 8v8l9 5 9-5V8" /><path d="M12 13v8" /></svg>;
+    case 'card': return <svg {...p}><rect x="2" y="5" width="20" height="14" rx="3" /><line x1="2" y1="10" x2="22" y2="10" /></svg>;
+    case 'chart': return <svg {...p}><line x1="5" y1="20" x2="5" y2="12" /><line x1="12" y1="20" x2="12" y2="6" /><line x1="19" y1="20" x2="19" y2="15" /></svg>;
+    case 'menu': return <svg {...p}><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" /></svg>;
+    case 'plus': return <svg {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
+    case 'camera': return <svg {...p}><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" /><circle cx="12" cy="13" r="3.5" /></svg>;
+    case 'trash': return <svg {...p}><line x1="4" y1="7" x2="20" y2="7" /><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>;
+    case 'edit': return <svg {...p}><path d="M4 20h4l10.5-10.5a2 2 0 0 0-2.8-2.8L5 17v3z" /></svg>;
+    case 'pin': return <svg {...p}><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2" /></svg>;
+    case 'alert': return <svg {...p}><path d="M12 3l10 18H2L12 3z" /><line x1="12" y1="10" x2="12" y2="14" /><line x1="12" y1="17" x2="12" y2="17" /></svg>;
+    case 'x': return <svg {...p}><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></svg>;
+    case 'chevronDown': return <svg {...p}><polyline points="6 9 12 15 18 9" /></svg>;
+    case 'chevronRight': return <svg {...p}><polyline points="9 6 15 12 9 18" /></svg>;
+    case 'chevronLeft': return <svg {...p}><polyline points="15 6 9 12 15 18" /></svg>;
+    case 'link': return <svg {...p}><path d="M9 15l6-6" /><path d="M11 6l1-1a4 4 0 0 1 6 6l-1 1" /><path d="M13 18l-1 1a4 4 0 0 1-6-6l1-1" /></svg>;
+    case 'shoppingList': return <svg {...p}><path d="M6 3h13l-1.5 9h-10z" /><path d="M6 3l-1-2H2" /><circle cx="9" cy="19" r="1.5" /><circle cx="16" cy="19" r="1.5" /></svg>;
+    case 'layers': return <svg {...p}><path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" /></svg>;
+    case 'arrowUpRight': return <svg {...p}><line x1="7" y1="17" x2="17" y2="7" /><polyline points="8 7 17 7 17 16" /></svg>;
+    case 'arrowDownRight': return <svg {...p}><line x1="7" y1="7" x2="17" y2="17" /><polyline points="17 8 17 17 8 17" /></svg>;
+    case 'bell': return <svg {...p}><path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9z" /><path d="M10 19a2 2 0 0 0 4 0" /></svg>;
+    case 'wallet': return <svg {...p}><rect x="3" y="6" width="18" height="13" rx="3" /><path d="M3 10h18" /><line x1="17" y1="14.5" x2="17" y2="14.5" /></svg>;
+    case 'trending': return <svg {...p}><polyline points="4 16 10 10 14 14 20 6" /><polyline points="14 6 20 6 20 12" /></svg>;
+    case 'sun': return <svg {...p}><circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="22" /><line x1="4" y1="12" x2="2" y2="12" /><line x1="22" y1="12" x2="20" y2="12" /><line x1="5" y1="5" x2="6.5" y2="6.5" /><line x1="17.5" y1="17.5" x2="19" y2="19" /><line x1="19" y1="5" x2="17.5" y2="6.5" /><line x1="6.5" y1="17.5" x2="5" y2="19" /></svg>;
+    case 'moon': return <svg {...p}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>;
+    case 'check': return <svg {...p}><polyline points="20 6 9 17 4 12" /></svg>;
+    case 'calculator': return <svg {...p}><rect x="4" y="2" width="16" height="20" rx="2" /><line x1="7" y1="6" x2="17" y2="6" /><line x1="8" y1="11" x2="8" y2="11" /><line x1="12" y1="11" x2="12" y2="11" /><line x1="16" y1="11" x2="16" y2="11" /><line x1="8" y1="15" x2="8" y2="15" /><line x1="12" y1="15" x2="12" y2="15" /><line x1="16" y1="15" x2="16" y2="15" /><line x1="8" y1="19" x2="8" y2="19" /><line x1="12" y1="19" x2="12" y2="19" /></svg>;
+    case 'note': return <svg {...p}><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" /><path d="M14 3v5h5" /><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="13" y2="17" /></svg>;
+    case 'settings': return <svg {...p}><circle cx="12" cy="12" r="3" /><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1c.6.5 1.3.9 2 1.2L10 21h4l.5-2.6c.7-.3 1.4-.7 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z" /></svg>;
+    case 'download': return <svg {...p}><path d="M12 3v12" /><polyline points="7 11 12 16 17 11" /><path d="M5 19h14" /></svg>;
+    case 'upload': return <svg {...p}><path d="M12 21V9" /><polyline points="7 13 12 8 17 13" /><path d="M5 5h14" /></svg>;
+    case 'store': return <svg {...p}><path d="M3 9l1-5h16l1 5" /><path d="M4 9v11h16V9" /><path d="M9 20v-6h6v6" /><line x1="3" y1="9" x2="21" y2="9" /></svg>;
+    case 'truck': return <svg {...p}><rect x="2" y="8" width="12" height="9" /><path d="M14 11h4l3 3v3h-7z" /><circle cx="6" cy="19" r="1.6" /><circle cx="17.5" cy="19" r="1.6" /></svg>;
+    case 'megaphone': return <svg {...p}><path d="M3 10v4a1 1 0 0 0 1 1h2l9 4V5l-9 4H4a1 1 0 0 0-1 1z" /><path d="M17 10a3 3 0 0 1 0 4" /></svg>;
+    case 'tag': return <svg {...p}><path d="M20 12l-8 8-9-9V4h7z" /><line x1="7.5" y1="7.5" x2="7.5" y2="7.5" /></svg>;
+    case 'wrench': return <svg {...p}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z" /></svg>;
+    case 'star': return <svg {...p}><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>;
+    case 'spool': return <svg {...p}><ellipse cx="12" cy="6" rx="7" ry="2.5" /><ellipse cx="12" cy="18" rx="7" ry="2.5" /><line x1="5" y1="6" x2="5" y2="18" /><line x1="19" y1="6" x2="19" y2="18" /></svg>;
+    default: return null;
+  }
+}
+const CATEGORY_ICON = { 'Anyag':'tag', 'Csomagolás':'box', 'Posta':'truck', 'Hirdetés':'megaphone', 'Helypénz':'store', 'Eszköz':'wrench', 'Egyéb':'star' };
+
+/* ===================== VÁLLALKOZÁS VÁLTÓ ===================== */
+function BusinessSwitcher({ open, onClose, businesses, activeId, onSwitch, onCreate, onDelete, onRename }) {
+  const [newName, setNewName] = useState('');
+  const [renaming, setRenaming] = useState(null);
+
+  const sorted = [...businesses].sort((a,b) => {
+    if (a.id===activeId) return -1;
+    if (b.id===activeId) return 1;
+    return a.name.localeCompare(b.name, 'hu');
+  });
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Vállalkozásaim">
+      <div className="space-y-2 mb-4">
+        {sorted.map(b => (
+          <div key={b.id} className="flex items-center gap-3 p-3 rounded-2xl" style={{
+            background: b.id===activeId ? 'var(--cacao)' : 'var(--bg)',
+            border: b.id===activeId ? 'none' : '1px solid var(--border)',
+          }}>
+            <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center font-bold" style={{background:b.color, color:'#fff'}}>{b.name.trim().charAt(0).toUpperCase()}</div>
+            <div className="flex-1 min-w-0" onClick={() => { onSwitch(b.id); onClose(); }}>
+              {renaming === b.id ? (
+                <input autoFocus className="input py-1" style={{color:'var(--text)', background:'var(--surface)'}} defaultValue={b.name}
+                  onBlur={e => { onRename(b.id, e.target.value.trim() || b.name); setRenaming(null); }}
+                  onKeyDown={e => { if (e.key==='Enter') e.target.blur(); }} onClick={e=>e.stopPropagation()} />
+              ) : (
+                <div className="font-semibold truncate flex items-center gap-2" style={{color: b.id===activeId ? '#fff' : 'var(--text)'}}>
+                  {b.name}{b.isDemo && <span className="text-xs chip flex-shrink-0" style={{background: b.id===activeId ? 'rgba(255,255,255,.25)' : 'var(--lavender)', color: b.id===activeId ? '#fff' : 'var(--text)'}}>demó</span>}
+                </div>
+              )}
+              <div className="text-xs" style={{color: b.id===activeId ? 'rgba(255,255,255,.75)' : 'var(--text-dim)'}}>{b.id===activeId ? 'Aktív' : 'Koppints a váltáshoz'}</div>
+            </div>
+            <button onClick={()=>setRenaming(b.id)} className="icon-circle w-8 h-8" style={{color: b.id===activeId ? '#fff' : 'var(--text-dim)', background: b.id===activeId ? 'rgba(255,255,255,.18)' : 'var(--surface)'}} title="Átnevezés"><Icon name="edit" size={16} /></button>
+            {businesses.length > 1 && <button onClick={()=>onDelete(b)} className="icon-circle w-8 h-8" style={{color: b.id===activeId ? '#fff' : 'var(--danger)', background: b.id===activeId ? 'rgba(255,255,255,.18)' : 'var(--surface)'}} title="Törlés"><Icon name="trash" size={16} /></button>}
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input className="input" placeholder="Új vállalkozás neve…" value={newName} onChange={e=>setNewName(e.target.value)} />
+        <button className="btn-primary rounded-2xl px-4 font-semibold flex items-center gap-1" onClick={() => { if(newName.trim()){ onCreate(newName.trim()); setNewName(''); } }}><Icon name="plus" size={16} /> Létrehoz</button>
+      </div>
+    </BottomSheet>
+  );
+}
+
+/* ===================== KEZDŐLAP ===================== */
+function Dashboard({ business, products, sales, expenses, channels, onNav }) {
+  const [month, setMonth] = useState(monthKey(todayISO()));
+  const lastMonthKey = shiftMonth(month, -1);
+
+  const monthSales = sales.filter(s => monthKey(s.date) === month);
+  const monthExpenses = expenses.filter(e => monthKey(e.date) === month);
+  const revenue = monthSales.reduce((a,s)=>a+(s.net ?? s.qty*s.unitPrice),0);
+  const spent = monthExpenses.reduce((a,e)=>a+e.amount,0);
+  const profit = revenue - spent;
+  const soldQty = monthSales.reduce((a,s)=>a+s.qty,0);
+
+  const lastMonthSales = sales.filter(s => monthKey(s.date) === lastMonthKey);
+  const lastMonthExpenses = expenses.filter(e => monthKey(e.date) === lastMonthKey);
+  const lastProfit = lastMonthSales.reduce((a,s)=>a+(s.net??0),0) - lastMonthExpenses.reduce((a,e)=>a+e.amount,0);
+  const profitChangePct = lastProfit !== 0 ? Math.round(((profit-lastProfit)/Math.abs(lastProfit))*100) : (profit>0 ? 100 : 0);
+
+  const last6 = Array.from({length:6}, (_,i) => shiftMonth(month, -(5-i)));
+  const trendData = {
+    labels: last6.map(k => HU_MONTHS[Number(k.split('-')[1])-1]),
+    datasets: [
+      { label:'Bevétel', data: last6.map(k => sales.filter(s=>monthKey(s.date)===k).reduce((a,s)=>a+(s.net ?? s.qty*s.unitPrice),0)), borderColor: PALETTE.grass, backgroundColor: PALETTE.grass+'33', tension:.35, fill:true },
+      { label:'Kiadás', data: last6.map(k => expenses.filter(e=>monthKey(e.date)===k).reduce((a,e)=>a+e.amount,0)), borderColor: PALETTE.dusty, backgroundColor: PALETTE.dusty+'33', tension:.35, fill:true },
+    ]
+  };
+
+  const recent = [...sales.map(s=>({...s,kind:'sale'})), ...expenses.map(e=>({...e,kind:'expense'}))]
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||'')).slice(0,6);
+
+  const channelTotals = channels
+    .map(c => ({ ...c, total: monthSales.filter(s=>s.channelId===c.id).reduce((a,s)=>a+(s.net??0),0) }))
+    .filter(c => c.total > 0)
+    .sort((a,b)=>b.total-a.total);
+
+  const quickActions = [
+    { icon:'trending', label:'Bevétel', color:PALETTE.grass, onClick:()=>onNav('finances','sale') },
+    { icon:'card', label:'Kiadás', color:PALETTE.dusty, onClick:()=>onNav('finances','expense') },
+    { icon:'box', label:'Termék', color:PALETTE.sky, onClick:()=>onNav('products','new') },
+    { icon:'calculator', label:'Kalkulátor', color:PALETTE.lavender, onClick:()=>onNav('calculator') },
+  ];
+
+  const activeMonths = [...new Set([...sales, ...expenses].map(item => monthKey(item.date)).filter(Boolean))];
+  const avgMonthlyRevenue = activeMonths.length ? activeMonths.reduce((a,k)=>a+sales.filter(s=>monthKey(s.date)===k).reduce((x,s)=>x+(s.net??0),0),0) / activeMonths.length : 0;
+  const avgMonthlyProfit = activeMonths.length ? activeMonths.reduce((a,k)=>{
+    const rev = sales.filter(s=>monthKey(s.date)===k).reduce((x,s)=>x+(s.net??0),0);
+    const exp = expenses.filter(e=>monthKey(e.date)===k).reduce((x,e)=>x+e.amount,0);
+    return a + (rev-exp);
+  },0) / activeMonths.length : 0;
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-5">
+      <MonthNav month={month} onChange={setMonth} />
+
+      <div className="card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-bold">Havi összegzés</div>
+          <span className="chip flex items-center gap-1" style={{background: profitChangePct>=0 ? PALETTE.grass+'22' : PALETTE.dusty+'22', color: profitChangePct>=0 ? PALETTE.grass : PALETTE.dusty}}>
+            <Icon name={profitChangePct>=0?'arrowUpRight':'arrowDownRight'} size={13} /> {Math.abs(profitChangePct)}% az előző hónaphoz
+          </span>
+        </div>
+        <div className="grid grid-cols-3 divide-x" style={{borderColor:'var(--border)'}}>
+          <div className="text-center px-1">
+            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Bevétel</div>
+            <div className="font-extrabold text-sm" style={{color:PALETTE.grass}}>{fmtHUF(revenue)}</div>
+          </div>
+          <div className="text-center px-1">
+            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Kiadás</div>
+            <div className="font-extrabold text-sm" style={{color:PALETTE.dusty}}>{fmtHUF(spent)}</div>
+          </div>
+          <div className="text-center px-1">
+            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Profit</div>
+            <div className="font-extrabold text-sm">{fmtHUF(profit)}</div>
+          </div>
+        </div>
+        {(revenue+spent) > 0 ? (
+          <div className="mt-2">
+            <ChartCanvas type="doughnut" height={140} data={{
+              labels: ['Bevétel','Kiadás'],
+              datasets: [{ data: [revenue, spent], backgroundColor: [PALETTE.grass, PALETTE.dusty], borderWidth: 0 }],
+            }} options={{
+              responsive:true, maintainAspectRatio:false, circumference:180, rotation:270, cutout:'72%',
+              plugins:{ legend:{ display:false }, tooltip:{ enabled:true } },
+            }} />
+            <div className="flex justify-center gap-6 -mt-3 text-xs">
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{background:PALETTE.grass}}></span>Bevétel {Math.round(revenue/(revenue+spent)*100)}%</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{background:PALETTE.dusty}}></span>Kiadás {Math.round(spent/(revenue+spent)*100)}%</span>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 text-xs text-center" style={{color:'var(--text-dim)'}}>Nincs még rögzített tétel ebben a hónapban.</div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-4 gap-2">
+        {quickActions.map(a => (
+          <button key={a.label} onClick={a.onClick} className="quick-tile active:scale-95 transition" style={{background:a.color+'26'}}>
+            <Icon name={a.icon} size={19} style={{color:a.color}} />
+            <span className="text-[11px] font-semibold" style={{color:'var(--text)'}}>{a.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-3">Átlagos havi jövedelem</div>
+        <div className="grid grid-cols-2 divide-x" style={{borderColor:'var(--border)'}}>
+          <div className="text-center px-1">
+            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Átlagos havi bevétel</div>
+            <div className="font-extrabold" style={{color:PALETTE.grass}}>{fmtHUF(avgMonthlyRevenue)}</div>
+          </div>
+          <div className="text-center px-1">
+            <div className="text-xs mb-1" style={{color:'var(--text-dim)'}}>Átlagos havi profit</div>
+            <div className="font-extrabold">{fmtHUF(avgMonthlyProfit)}</div>
+          </div>
+        </div>
+        {activeMonths.length > 0 && <div className="text-[11px] text-center mt-2" style={{color:'var(--text-dim)'}}>{activeMonths.length} hónap adatai alapján</div>}
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">6 havi trend</div>
+        <ChartCanvas type="line" data={trendData} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'var(--text)'}}}, scales:{x:{ticks:{color:'var(--text-dim)'}},y:{ticks:{color:'var(--text-dim)'}}} }} height={200} />
+      </div>
+
+      {channelTotals.length > 0 && (
+        <div>
+          <div className="font-bold mb-2">Csatornák (havi bevétel)</div>
+          <div>
+            {channelTotals.map((c,i) => (
+              <div key={c.id} className="wallet-band p-4 flex items-center justify-between text-white"
+                style={{ background: CHART_COLORS[i % CHART_COLORS.length], marginTop: i===0?0:-16, position:'relative', zIndex:i }}>
+                <div className="flex items-center gap-3">
+                  <div className="icon-circle w-9 h-9" style={{background:'rgba(255,255,255,.25)'}}><Icon name="wallet" size={17} /></div>
+                  <span className="font-semibold text-sm">{c.name}</span>
+                </div>
+                <span className="font-bold">{fmtHUF(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="font-bold mb-2">Legutóbbi tételek</div>
+        {recent.length === 0 ? <EmptyState icon="note" text="Még nincs rögzített tétel." /> : (
+          <div className="space-y-2">
+            {recent.map(r => (
+              <div key={r.id} className="card p-3 flex items-center gap-3">
+                <div className="icon-circle w-10 h-10" style={{background: r.kind==='sale' ? PALETTE.grass+'22' : PALETTE.dusty+'22', color: r.kind==='sale' ? PALETTE.grass : PALETTE.dusty}}>
+                  <Icon name={r.kind==='sale' ? 'arrowUpRight' : 'arrowDownRight'} size={17} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold truncate">{r.kind==='sale' ? r.productName : r.description}</div>
+                  <div className="text-xs" style={{color:'var(--text-dim)'}}>{fmtDate(r.date)} · {r.kind==='sale' ? (channels.find(c=>c.id===r.channelId)?.name || '—') : r.category}</div>
+                </div>
+                <div className="font-bold flex-shrink-0" style={{color: r.kind==='sale' ? PALETTE.grass : PALETTE.dusty}}>
+                  {r.kind==='sale' ? '+' : '-'}{fmtHUF(r.kind==='sale' ? (r.net ?? r.qty*r.unitPrice) : r.amount)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===================== TERMÉKEK ===================== */
+function ProductForm({ initial, onSave, onClose, categories, channels }) {
+  const [form, setForm] = useState(initial || { name:'', category: categories[0], cost:'', price:'', stock:'', photos:[], materials:[], channelPrices:{} });
+  const set = (k,v) => setForm(f => ({...f, [k]:v}));
+  const fileRef = useRef(null);
+
+  const addPhoto = async (e) => {
+    const files = Array.from(e.target.files || []);
+    const dataUrls = await Promise.all(files.map(f => resizeImage(f)));
+    set('photos', [...(form.photos||[]), ...dataUrls]);
+  };
+
+  const materials = form.materials || [];
+  const materialTotal = materials.reduce((a,m)=>a+(Number(m.qty)||0)*(Number(m.unitCost)||0),0);
+  const setMaterial = (i, key, val) => { const arr=[...materials]; arr[i] = {...arr[i], [key]:val}; set('materials', arr); };
+  const addMaterial = () => set('materials', [...materials, { name:'', qty:1, unit:'db', unitCost:'' }]);
+  const removeMaterial = (i) => set('materials', materials.filter((_,j)=>j!==i));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {(form.photos||[]).map((p,i) => (
+          <div key={i} className="relative flex-shrink-0">
+            <img src={p} className="w-20 h-20 object-cover rounded-xl" />
+            <button onClick={()=>set('photos', form.photos.filter((_,j)=>j!==i))} className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/60 text-white icon-circle"><Icon name="x" size={11} /></button>
+          </div>
+        ))}
+        <button onClick={()=>fileRef.current.click()} className="w-20 h-20 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:'var(--bg)', border:'1px dashed var(--border)', color:'var(--text-dim)'}}><Icon name="camera" size={22} /></button>
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={addPhoto} />
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Termék neve</label>
+        <input className="input mt-1" value={form.name} onChange={e=>set('name', e.target.value)} placeholder="pl. Sárkány mintás táska" />
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Kategória</label>
+        <select className="input mt-1" value={form.category} onChange={e=>set('category', e.target.value)}>
+          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Önköltség</label><input type="number" className="input mt-1" value={form.cost} onChange={e=>set('cost', e.target.value)} /></div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Alapár</label><input type="number" className="input mt-1" value={form.price} onChange={e=>set('price', e.target.value)} /></div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Készlet</label><input type="number" className="input mt-1" value={form.stock} onChange={e=>set('stock', e.target.value)} /></div>
+      </div>
+
+      <div className="card p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-semibold text-sm">Anyagköltség-lebontás</div>
+          <button className="chip" style={{background:'var(--bg)'}} onClick={addMaterial}>+ Anyag</button>
+        </div>
+        {materials.length === 0 ? (
+          <div className="text-xs" style={{color:'var(--text-dim)'}}>Add hozzá, milyen anyagok és mennyi kell ehhez a termékhez (pl. vászon, cipzár), hogy a bevásárlólistában is szerepelhessen.</div>
+        ) : (
+          <div className="space-y-3">
+            {materials.map((m,i) => (
+              <div key={i} className="rounded-2xl p-2.5" style={{background:'var(--bg)', border:'1px solid var(--border)'}}>
+                <div className="flex items-center gap-2 mb-2">
+                  <input className="input py-1.5 flex-1" placeholder="Anyag neve (pl. vászon)" value={m.name} onChange={e=>setMaterial(i,'name',e.target.value)} />
+                  <button className="icon-circle w-7 h-7 flex-shrink-0" style={{color:'var(--danger)'}} onClick={()=>removeMaterial(i)}><Icon name="x" size={14} /></button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label>
+                    <input type="number" className="input py-1.5 mt-0.5" placeholder="1" value={m.qty} onChange={e=>setMaterial(i,'qty',e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Egység</label>
+                    <input className="input py-1.5 mt-0.5" placeholder="db / m / g" value={m.unit} onChange={e=>setMaterial(i,'unit',e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold" style={{color:'var(--text-dim)'}}>Ft / egység</label>
+                    <input type="number" className="input py-1.5 mt-0.5" placeholder="0" value={m.unitCost} onChange={e=>setMaterial(i,'unitCost',e.target.value)} />
+                  </div>
+                </div>
+                <div className="text-right text-xs mt-1.5" style={{color:'var(--text-dim)'}}>Részösszeg: <b style={{color:'var(--text)'}}>{fmtHUF((Number(m.qty)||0)*(Number(m.unitCost)||0))}</b></div>
+              </div>
+            ))}
+            <div className="flex items-center justify-between pt-1 text-sm">
+              <span style={{color:'var(--text-dim)'}}>Összes anyagköltség</span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold">{fmtHUF(materialTotal)}</span>
+                <button className="chip" style={{background:'var(--peony)', color:'var(--cacao)'}} onClick={()=>set('cost', Math.round(materialTotal))}>Átveszem önköltségnek</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="card p-3">
+        <div className="font-semibold text-sm mb-2">Csatornánkénti ár (opcionális)</div>
+        <div className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Ha üresen hagyod, az alapár érvényes az adott csatornán.</div>
+        <div className="space-y-2">
+          {channels.map(c => (
+            <div key={c.id} className="flex items-center gap-2">
+              <span className="flex-1 text-sm truncate">{c.name}</span>
+              <input type="number" className="input py-1.5 w-28" placeholder={String(form.price || 0)} value={(form.channelPrices||{})[c.id] ?? ''} onChange={e=>set('channelPrices', {...(form.channelPrices||{}), [c.id]: e.target.value===''?undefined:Number(e.target.value)})} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button className="btn-primary w-full py-3 rounded-2xl font-bold mt-2" onClick={() => {
+        if (!form.name.trim()) return;
+        onSave({ ...form, cost:Number(form.cost)||0, price:Number(form.price)||0, stock:Number(form.stock)||0, materials });
+        onClose();
+      }}>Mentés</button>
+    </div>
+  );
+}
+
+function Products({ business, products, categories, channels, onSave, onDelete, autoOpenNew, onAutoOpenHandled }) {
+  const [editing, setEditing] = useState(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [filter, setFilter] = useState('Mind');
+
+  useEffect(() => { if (autoOpenNew) { setEditing(null); setSheetOpen(true); onAutoOpenHandled(); } }, [autoOpenNew]);
+
+  const filtered = filter==='Mind' ? products : products.filter(p=>p.category===filter);
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold">Termékek</h1>
+        <button onClick={()=>{setEditing(null); setSheetOpen(true);}} className="btn-primary icon-circle w-10 h-10"><Icon name="plus" size={18} /></button>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {['Mind', ...categories].map(c => (
+          <button key={c} onClick={()=>setFilter(c)} className="chip flex-shrink-0" style={{background: filter===c ? 'var(--cacao)' : 'var(--bg)', color: filter===c ? '#fff' : 'var(--text)'}}>{c}</button>
+        ))}
+      </div>
+      {filtered.length === 0 ? <EmptyState icon="box" text="Nincs még termék ebben a kategóriában." /> : (
+        <div className="grid grid-cols-2 gap-3">
+          {filtered.map(p => (
+            <div key={p.id} className="card overflow-hidden" onClick={()=>{setEditing(p); setSheetOpen(true);}}>
+              <div className="w-full aspect-square flex items-center justify-center" style={{background:'var(--peony)', color:'var(--cacao)'}}>
+                {p.photos && p.photos[0] ? <img src={p.photos[0]} className="w-full h-full object-cover" /> : <Icon name="spool" size={34} />}
+              </div>
+              <div className="p-3">
+                <div className="font-semibold text-sm truncate">{p.name}</div>
+                <div className="text-xs" style={{color:'var(--text-dim)'}}>{p.category} · Készlet: {p.stock}</div>
+                <div className="font-bold mt-1" style={{color:'var(--cacao)'}}>{fmtHUF(p.price)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={editing ? 'Termék szerkesztése' : 'Új termék'}>
+        <ProductForm initial={editing} categories={categories} channels={channels} onClose={()=>setSheetOpen(false)}
+          onSave={(data)=>onSave({ id: editing?.id || uid(), businessId: business.id, createdAt: editing?.createdAt || todayISO(), ...data })} />
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Termék törlése</button>}
+      </BottomSheet>
+    </div>
+  );
+}
+
+/* ===================== PÉNZÜGYEK ===================== */
+function SaleForm({ initial, products, channels, onSave, onClose }) {
+  const [form, setForm] = useState(initial || { date: todayISO(), productName:'', qty:1, unitPrice:'', channelId: channels[0]?.id, feeOverride:'', paymentMethod: PAYMENT_METHODS[0], note:'', tags:[] });
+  const [tagsInput, setTagsInput] = useState((initial?.tags||[]).join(', '));
+  const [autoPrice, setAutoPrice] = useState(!initial);
+  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+
+  useEffect(() => {
+    if (!autoPrice) return;
+    const product = products.find(p => p.name === form.productName);
+    if (!product) return;
+    const price = (product.channelPrices && product.channelPrices[form.channelId] != null) ? product.channelPrices[form.channelId] : product.price;
+    if (price != null) set('unitPrice', price);
+  }, [form.productName, form.channelId, autoPrice]);
+
+  const channel = channels.find(c=>c.id===form.channelId) || channels[0];
+  const effectiveFee = form.feeOverride !== '' && form.feeOverride !== undefined ? Number(form.feeOverride) : (channel?.fee||0);
+  const gross = (Number(form.qty)||0) * (Number(form.unitPrice)||0);
+  const commissionAmount = Math.round(gross * (effectiveFee/100));
+  const net = gross - commissionAmount;
+  return (
+    <div className="space-y-3">
+      <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Dátum</label><input type="date" className="input mt-1" value={form.date} onChange={e=>set('date', e.target.value)} /></div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Termék</label>
+        <input list="product-list" className="input mt-1" value={form.productName} onChange={e=>set('productName', e.target.value)} placeholder="Termék neve" />
+        <datalist id="product-list">{products.map(p=><option key={p.id} value={p.name} />)}</datalist>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label><input type="number" className="input mt-1" value={form.qty} onChange={e=>set('qty', e.target.value)} /></div>
+        <div>
+          <label className="text-xs font-semibold flex items-center gap-1" style={{color:'var(--text-dim)'}}>Egységár {autoPrice && <span className="text-[10px]" style={{color:PALETTE.grass}}>(automatikus)</span>}</label>
+          <input type="number" className="input mt-1" value={form.unitPrice} onChange={e=>{ setAutoPrice(false); set('unitPrice', e.target.value); }} />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Csatorna</label>
+          <select className="input mt-1" value={form.channelId} onChange={e=>{ set('channelId', e.target.value); set('feeOverride',''); }}>
+            {channels.map(c => <option key={c.id} value={c.id}>{c.name} ({c.fee}%)</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Jutalék % (felülírható)</label>
+          <input type="number" className="input mt-1" placeholder={String(channel?.fee||0)} value={form.feeOverride} onChange={e=>set('feeOverride', e.target.value)} />
+        </div>
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Fizetési mód</label>
+        <select className="input mt-1" value={form.paymentMethod} onChange={e=>set('paymentMethod', e.target.value)}>{PAYMENT_METHODS.map(m=><option key={m} value={m}>{m}</option>)}</select>
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Címkék (vesszővel elválasztva)</label>
+        <input className="input mt-1" value={tagsInput} onChange={e=>{ setTagsInput(e.target.value); set('tags', parseTags(e.target.value)); }} placeholder="pl. karácsonyi vásár, akció" />
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Megjegyzés</label>
+        <textarea className="input mt-1 min-h-[70px]" value={form.note} onChange={e=>set('note', e.target.value)} placeholder="Szabad szöveges megjegyzés…" />
+      </div>
+      <div className="card p-3 space-y-1 text-sm">
+        <div className="flex justify-between"><span style={{color:'var(--text-dim)'}}>Bruttó</span><span className="font-semibold">{fmtHUF(gross)}</span></div>
+        <div className="flex justify-between"><span style={{color:'var(--text-dim)'}}>Jutalék ({effectiveFee}%)</span><span className="font-semibold" style={{color:PALETTE.dusty}}>-{fmtHUF(commissionAmount)}</span></div>
+        <div className="flex justify-between text-base"><span className="font-bold">Nettó</span><span className="font-bold" style={{color:PALETTE.grass}}>{fmtHUF(net)}</span></div>
+      </div>
+      <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={()=>{
+        if (!form.productName.trim()) return;
+        onSave({ ...form, qty:Number(form.qty)||0, unitPrice:Number(form.unitPrice)||0, fee: effectiveFee, net, commissionAmount, feeOverride: undefined });
+        onClose();
+      }}>Mentés</button>
+    </div>
+  );
+}
+
+function ExpenseForm({ initial, categories, onSave, onClose }) {
+  const [form, setForm] = useState(initial || { date: todayISO(), category: categories[0], description:'', amount:'', link:'', paymentMethod: PAYMENT_METHODS[0], note:'', tags:[] });
+  const [tagsInput, setTagsInput] = useState((initial?.tags||[]).join(', '));
+  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+  return (
+    <div className="space-y-3">
+      <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Dátum</label><input type="date" className="input mt-1" value={form.date} onChange={e=>set('date', e.target.value)} /></div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Kategória</label>
+        <select className="input mt-1" value={form.category} onChange={e=>set('category', e.target.value)}>{categories.map(c=><option key={c} value={c}>{c}</option>)}</select>
+      </div>
+      <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Leírás</label><input className="input mt-1" value={form.description} onChange={e=>set('description', e.target.value)} placeholder="pl. Rea Tex – vászon" /></div>
+      <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Összeg</label><input type="number" className="input mt-1" value={form.amount} onChange={e=>set('amount', e.target.value)} /></div>
+      <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Link a beszerzés helyéhez (opcionális)</label><input type="url" className="input mt-1" value={form.link||''} onChange={e=>set('link', e.target.value)} placeholder="https://…" /></div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Fizetési mód</label>
+        <select className="input mt-1" value={form.paymentMethod} onChange={e=>set('paymentMethod', e.target.value)}>{PAYMENT_METHODS.map(m=><option key={m} value={m}>{m}</option>)}</select>
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Címkék (vesszővel elválasztva)</label>
+        <input className="input mt-1" value={tagsInput} onChange={e=>{ setTagsInput(e.target.value); set('tags', parseTags(e.target.value)); }} placeholder="pl. kampány, egyszeri" />
+      </div>
+      <div>
+        <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Megjegyzés</label>
+        <textarea className="input mt-1 min-h-[70px]" value={form.note} onChange={e=>set('note', e.target.value)} placeholder="Szabad szöveges megjegyzés…" />
+      </div>
+      <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={()=>{
+        if (!form.description.trim() || !form.amount) return;
+        onSave({ ...form, amount:Number(form.amount)||0 });
+        onClose();
+      }}>Mentés</button>
+    </div>
+  );
+}
+
+function Finances({ business, products, sales, expenses, channels, expenseCategories, onSaveSale, onDeleteSale, onSaveExpense, onDeleteExpense, initialTab, onAutoOpenHandled }) {
+  const [tab, setTab] = useState('sales');
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [month, setMonth] = useState(monthKey(todayISO()));
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    if (initialTab === 'sale') { setTab('sales'); setEditing(null); setSheetOpen(true); onAutoOpenHandled(); }
+    if (initialTab === 'expense') { setTab('expenses'); setEditing(null); setSheetOpen(true); onAutoOpenHandled(); }
+  }, [initialTab]);
+
+  const source = tab==='sales' ? sales : expenses;
+  const filtered = showAll ? source : source.filter(item => monthKey(item.date) === month);
+  const list = [...filtered].sort((a,b)=>b.date.localeCompare(a.date));
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-4">
+      <h1 className="text-2xl font-extrabold">Pénzügyek</h1>
+      <div className="flex rounded-2xl p-1" style={{background:'var(--bg)', border:'1px solid var(--border)'}}>
+        <button onClick={()=>setTab('sales')} className="flex-1 py-2 rounded-xl font-semibold text-sm" style={{background: tab==='sales'?'var(--surface)':'transparent'}}>Bevételek</button>
+        <button onClick={()=>setTab('expenses')} className="flex-1 py-2 rounded-xl font-semibold text-sm" style={{background: tab==='expenses'?'var(--surface)':'transparent'}}>Kiadások</button>
+      </div>
+
+      <MonthNav month={month} onChange={setMonth} allowAll isAll={showAll} onAll={()=>setShowAll(a=>!a)} />
+
+      {list.length === 0 ? <EmptyState icon={tab==='sales'?'trending':'card'} text={`Nincs rögzített ${tab==='sales'?'bevétel':'kiadás'} ebben az időszakban.`} /> : (
+        <div className="space-y-2">
+          {list.map(item => (
+            <div key={item.id} className="card p-3 flex items-center gap-3" onClick={()=>{setEditing(item); setSheetOpen(true);}}>
+              <div className="icon-circle w-10 h-10" style={{background: tab==='sales'?PALETTE.grass+'22':PALETTE.dusty+'22', color: tab==='sales'?PALETTE.grass:PALETTE.dusty}}>
+                <Icon name={tab==='sales' ? 'arrowUpRight' : (CATEGORY_ICON[item.category] || 'arrowDownRight')} size={17} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold truncate">{tab==='sales' ? item.productName : item.description}</div>
+                <div className="text-xs" style={{color:'var(--text-dim)'}}>{fmtDate(item.date)} · {tab==='sales' ? (channels.find(c=>c.id===item.channelId)?.name||'—') : item.category}{item.paymentMethod ? ` · ${item.paymentMethod}` : ''}</div>
+                {(item.tags && item.tags.length > 0) && (
+                  <div className="flex gap-1 flex-wrap mt-1">
+                    {item.tags.map(t => <span key={t} className="text-[10px] px-2 py-0.5 rounded-full" style={{background:'var(--bg)', color:'var(--text-dim)'}}>{t}</span>)}
+                  </div>
+                )}
+                {item.note && <div className="text-xs mt-1 truncate italic" style={{color:'var(--text-dim)'}}>{item.note}</div>}
+                {item.link && <a href={item.link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} className="text-xs mt-1 flex items-center gap-1 underline" style={{color:'var(--accent)'}}><Icon name="link" size={12} />Beszerzés helye</a>}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="font-bold" style={{color: tab==='sales'?PALETTE.grass:PALETTE.dusty}}>{fmtHUF(tab==='sales' ? item.net : item.amount)}</div>
+                {tab==='sales' && item.commissionAmount > 0 && <div className="text-[10px]" style={{color:'var(--text-dim)'}}>-{fmtHUF(item.commissionAmount)} jutalék</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button onClick={()=>{setEditing(null); setSheetOpen(true);}} className="btn-primary icon-circle fixed bottom-24 right-5 w-14 h-14 shadow-lg"><Icon name="plus" size={24} /></button>
+
+      <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={tab==='sales' ? (editing?'Bevétel szerkesztése':'Új bevétel') : (editing?'Kiadás szerkesztése':'Új kiadás')}>
+        {tab==='sales' ? (
+          <SaleForm initial={editing} products={products} channels={channels} onClose={()=>setSheetOpen(false)}
+            onSave={(data)=>onSaveSale({ id: editing?.id||uid(), businessId: business.id, ...data })} />
+        ) : (
+          <ExpenseForm initial={editing} categories={expenseCategories} onClose={()=>setSheetOpen(false)}
+            onSave={(data)=>onSaveExpense({ id: editing?.id||uid(), businessId: business.id, ...data })} />
+        )}
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{
+          tab==='sales' ? onDeleteSale(editing.id) : onDeleteExpense(editing.id); setSheetOpen(false);
+        }}>Törlés</button>}
+      </BottomSheet>
+    </div>
+  );
+}
+
+/* ===================== ÁRKALKULÁTOR ===================== */
+function Calculator({ channels, onSavePreset, onSaveToProduct, products }) {
+  const [materialCost, setMaterialCost] = useState(2237);
+  const [hours, setHours] = useState(4);
+  const [hourlyRate, setHourlyRate] = useState(4000);
+  const [growthPct, setGrowthPct] = useState(10);
+  const [channelId, setChannelId] = useState(channels[0]?.id);
+  const [name, setName] = useState('');
+
+  const channel = channels.find(c=>c.id===channelId) || channels[0];
+  const labor = hours * hourlyRate;
+  const revenue = ((Number(materialCost)||0) + labor) * (1 + Number(growthPct)/100);
+  const price = revenue * (1 + (channel?.fee||0)/100);
+  const profit = labor;
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-4">
+      <h1 className="text-2xl font-extrabold">Árkalkulátor</h1>
+      <div className="card p-4 space-y-3">
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Termék neve (opcionális)</label><input className="input mt-1" value={name} onChange={e=>setName(e.target.value)} placeholder="pl. Sárkány mintás táska" /></div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Anyagköltség (önköltség)</label><input type="number" className="input mt-1" value={materialCost} onChange={e=>setMaterialCost(e.target.value)} /></div>
+        <div className="grid grid-cols-2 gap-2">
+          <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Készítési idő (óra)</label><input type="number" className="input mt-1" value={hours} onChange={e=>setHours(e.target.value)} /></div>
+          <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Órabér</label><input type="number" className="input mt-1" value={hourlyRate} onChange={e=>setHourlyRate(e.target.value)} /></div>
+        </div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Vállalkozásfejlesztésre (%)</label><input type="number" className="input mt-1" value={growthPct} onChange={e=>setGrowthPct(e.target.value)} /></div>
+        <div>
+          <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Értékesítési csatorna (jutalék)</label>
+          <select className="input mt-1" value={channelId} onChange={e=>setChannelId(e.target.value)}>{channels.map(c=><option key={c.id} value={c.id}>{c.name} ({c.fee}%)</option>)}</select>
+        </div>
+      </div>
+
+      <div className="card p-4 space-y-2" style={{background:'var(--peony)', borderColor:'var(--dusty)'}}>
+        <div className="flex justify-between"><span style={{color:'var(--text-dim)'}}>Munkadíj</span><span className="font-semibold">{fmtHUF(labor)}</span></div>
+        <div className="flex justify-between"><span style={{color:'var(--text-dim)'}}>Bevétel (fejlesztéssel)</span><span className="font-semibold">{fmtHUF(revenue)}</span></div>
+        <div className="flex justify-between text-lg"><span className="font-bold">Ajánlott ár</span><span className="font-extrabold" style={{color:'var(--cacao)'}}>{fmtHUF(price)}</span></div>
+        <div className="flex justify-between"><span style={{color:'var(--text-dim)'}}>Profit</span><span className="font-semibold" style={{color:PALETTE.grass}}>{fmtHUF(profit)}</span></div>
+      </div>
+
+      <div className="flex gap-2">
+        <button className="flex-1 py-3 rounded-2xl font-bold card" onClick={()=>onSavePreset({ id: uid(), name: name||'Névtelen kalkuláció', materialCost:Number(materialCost), hours:Number(hours), hourlyRate:Number(hourlyRate), growthPct:Number(growthPct), channelId, price, revenue, profit, createdAt: todayISO() })}>Mentés presetként</button>
+        <button className="flex-1 py-3 rounded-2xl font-bold btn-primary" onClick={()=>onSaveToProduct({ name: name||'Új termék', cost:Number(materialCost), price:Math.round(price) })}>Termékké alakítás</button>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== STATISZTIKA ===================== */
+
+function Stats({ sales, expenses, channels, expenseCategories, products }) {
+  const [range, setRange] = useState('6m');
+  const [selectedMonth, setSelectedMonth] = useState(monthKey(todayISO()));
+  const [periodEnd, setPeriodEnd] = useState(monthKey(todayISO()));
+  const isMonthMode = range === 'month';
+  const isAllMode = range === 'all';
+  const monthsBack = range==='3m'?3:range==='12m'?12:6;
+
+  const changeRange = (v) => { setRange(v); setPeriodEnd(monthKey(todayISO())); };
+
+  const allYears = [...new Set([...sales, ...expenses].map(item => (item.date||'').slice(0,4)).filter(Boolean))].sort();
+
+  const keys = isMonthMode
+    ? Array.from({length: daysInMonth(selectedMonth)}, (_,i) => `${selectedMonth}-${pad(i+1)}`)
+    : isAllMode
+    ? allYears
+    : Array.from({length:monthsBack}, (_,i) => shiftMonth(periodEnd, -(monthsBack-1-i)));
+  const keyOf = iso => isMonthMode ? iso : isAllMode ? (iso||'').slice(0,4) : monthKey(iso);
+
+  const periodSales = isMonthMode ? sales.filter(s=>monthKey(s.date)===selectedMonth) : isAllMode ? sales : sales.filter(s=>keys.includes(monthKey(s.date)));
+  const periodExpenses = isMonthMode ? expenses.filter(e=>monthKey(e.date)===selectedMonth) : isAllMode ? expenses : expenses.filter(e=>keys.includes(monthKey(e.date)));
+
+  const revByKey = keys.map(k => periodSales.filter(s=>keyOf(s.date)===k).reduce((a,s)=>a+(s.net??0),0));
+  const expByKey = keys.map(k => periodExpenses.filter(e=>keyOf(e.date)===k).reduce((a,e)=>a+e.amount,0));
+  const profitByKey = keys.map((k,i)=>revByKey[i]-expByKey[i]);
+
+  const catTotals = expenseCategories.map(c => periodExpenses.filter(e=>e.category===c).reduce((a,e)=>a+e.amount,0));
+  const productTotals = {};
+  periodSales.forEach(s => { productTotals[s.productName] = (productTotals[s.productName]||0) + (s.net??0); });
+  const topProducts = Object.entries(productTotals).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  const channelTotals = channels.map(c => ({ ...c, total: periodSales.filter(s=>s.channelId===c.id).reduce((a,s)=>a+(s.net??0),0) })).filter(c=>c.total>0);
+
+  const totalRevenue = periodSales.reduce((a,s)=>a+(s.net??0),0);
+  const totalExpense = periodExpenses.reduce((a,e)=>a+e.amount,0);
+  const totalProfit = totalRevenue - totalExpense;
+  const totalCommission = periodSales.reduce((a,s)=>a+(s.commissionAmount??0),0);
+  const orderCount = periodSales.length;
+  const aov = orderCount > 0 ? totalRevenue / orderCount : 0;
+  const profitMargin = totalRevenue > 0 ? (totalProfit/totalRevenue)*100 : 0;
+  const expenseRatio = totalRevenue > 0 ? (totalExpense/totalRevenue)*100 : 0;
+  const bestIdx = profitByKey.length ? profitByKey.indexOf(Math.max(...profitByKey)) : -1;
+  const bestKeyLabel = bestIdx >= 0 && profitByKey[bestIdx] > 0 ? (isMonthMode ? `${Number(keys[bestIdx].split('-')[2])}.` : isAllMode ? keys[bestIdx] : fmtMonth(keys[bestIdx])) : '—';
+
+  const prevSales = isAllMode ? [] : isMonthMode ? sales.filter(s=>monthKey(s.date)===shiftMonth(selectedMonth,-1)) : sales.filter(s=>{ const k=monthKey(s.date); return !keys.includes(k) && k >= shiftMonth(keys[0],-monthsBack) && k < keys[0]; });
+  const prevExpenses = isAllMode ? [] : isMonthMode ? expenses.filter(e=>monthKey(e.date)===shiftMonth(selectedMonth,-1)) : expenses.filter(e=>{ const k=monthKey(e.date); return !keys.includes(k) && k >= shiftMonth(keys[0],-monthsBack) && k < keys[0]; });
+  const prevProfit = prevSales.reduce((a,s)=>a+(s.net??0),0) - prevExpenses.reduce((a,e)=>a+e.amount,0);
+  const growthPct = prevProfit !== 0 ? Math.round(((totalProfit-prevProfit)/Math.abs(prevProfit))*100) : (totalProfit>0?100:0);
+
+  const tagCounts = {};
+  [...periodSales, ...periodExpenses].forEach(item => (item.tags||[]).forEach(t => { tagCounts[t] = (tagCounts[t]||0)+1; }));
+  const topTags = Object.entries(tagCounts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+
+  const marginRows = (products||[]).map(p => {
+    const materialCost = (p.materials||[]).reduce((a,m)=>a+(Number(m.qty)||0)*(Number(m.unitCost)||0), 0);
+    const cost = materialCost || p.cost || 0;
+    const marginFt = (p.price||0) - cost;
+    const marginPct = p.price ? (marginFt/p.price)*100 : 0;
+    return { name: p.name, price: p.price||0, cost, marginFt, marginPct };
+  }).sort((a,b)=>b.marginPct-a.marginPct);
+
+  const kpis = [
+    { label:'Rendelések száma', value: orderCount },
+    { label:'Átlagos kosárérték', value: fmtHUF(aov) },
+    { label:'Profit ráta', value: `${profitMargin.toFixed(0)}%` },
+    { label:'Összes jutalék', value: fmtHUF(totalCommission) },
+    { label:'Kiadás/bevétel arány', value: `${expenseRatio.toFixed(0)}%` },
+    { label: isMonthMode ? 'Legjobb nap' : isAllMode ? 'Legjobb év' : 'Legjobb hónap', value: bestKeyLabel },
+  ];
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-5">
+      <h1 className="text-2xl font-extrabold">Statisztika</h1>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {[['all','Összes'],['month','1 hónap'],['3m','3 hónap'],['6m','6 hónap'],['12m','1 év']].map(([v,l]) => (
+          <button key={v} onClick={()=>changeRange(v)} className="chip flex-shrink-0" style={{background: range===v?'var(--cacao)':'var(--bg)', color: range===v?'#fff':'var(--text)'}}>{l}</button>
+        ))}
+      </div>
+      {isMonthMode ? (
+        <MonthNav month={selectedMonth} onChange={setSelectedMonth} />
+      ) : isAllMode ? (
+        <div className="card px-3 py-2.5 text-center font-bold text-sm">
+          {allYears.length > 0 ? `${allYears[0]} – ${allYears[allYears.length-1]}` : 'Nincs még adat'} (teljes időszak)
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 card px-1 py-1">
+          <button className="icon-circle w-9 h-9 flex-shrink-0" style={{color:'var(--text-dim)'}} onClick={()=>setPeriodEnd(shiftMonth(periodEnd,-monthsBack))}><Icon name="chevronLeft" size={16} /></button>
+          <div className="flex-1 text-center font-bold text-sm">{fmtMonth(keys[0])} – {fmtMonth(keys[keys.length-1])}</div>
+          <button className="icon-circle w-9 h-9 flex-shrink-0" style={{color:'var(--text-dim)'}} onClick={()=>setPeriodEnd(shiftMonth(periodEnd,monthsBack))}><Icon name="chevronRight" size={16} /></button>
+        </div>
+      )}
+
+      <div className="card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="chip" style={{background:'var(--peony)', color:'var(--cacao)'}}>{isAllMode ? 'Összes profit' : 'Profit'}</span>
+          {!isAllMode && (
+            <span className="chip flex items-center gap-1" style={{background: growthPct>=0 ? PALETTE.grass+'22' : PALETTE.dusty+'22', color: growthPct>=0 ? PALETTE.grass : PALETTE.dusty}}>
+              <Icon name={growthPct>=0?'arrowUpRight':'arrowDownRight'} size={13} /> {Math.abs(growthPct)}% az előző időszakhoz
+            </span>
+          )}
+        </div>
+        <div className="text-2xl font-extrabold">{fmtHUF(totalProfit)}</div>
+        <div className="flex gap-4 mt-2 text-sm" style={{color:'var(--text-dim)'}}>
+          <span>Bevétel: <b style={{color:PALETTE.grass}}>{fmtHUF(totalRevenue)}</b></span>
+          <span>Kiadás: <b style={{color:PALETTE.dusty}}>{fmtHUF(totalExpense)}</b></span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        {kpis.map(k => (
+          <div key={k.label} className="card p-3">
+            <div className="text-xs" style={{color:'var(--text-dim)'}}>{k.label}</div>
+            <div className="font-extrabold mt-1">{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {keys.length > 0 && (
+        <div className="card p-4">
+          <div className="font-bold mb-2">Bevétel / Kiadás / Profit {isAllMode && '(évenként)'}</div>
+          <ChartCanvas type="bar" height={220} data={{
+            labels: keys.map(k=> isMonthMode ? k.split('-')[2] : isAllMode ? k : HU_MONTHS[Number(k.split('-')[1])-1]),
+            datasets: [
+              { label:'Bevétel', data: revByKey, backgroundColor: PALETTE.grass },
+              { label:'Kiadás', data: expByKey, backgroundColor: PALETTE.dusty },
+              { label:'Profit', data: profitByKey, backgroundColor: PALETTE.sky },
+            ]
+          }} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'var(--text)'}}}, scales:{x:{ticks:{color:'var(--text-dim)'}},y:{ticks:{color:'var(--text-dim)'}}} }} />
+        </div>
+      )}
+
+      <div className="card p-5">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <span className="chip" style={{background:'var(--peony)', color:'var(--cacao)'}}>Kiadás megoszlás</span>
+            <div className="text-2xl font-extrabold mt-2">{fmtHUF(totalExpense)}</div>
+          </div>
+        </div>
+        {totalExpense === 0 ? <EmptyState icon="card" text="Nincs még kiadás." /> : (
+          <>
+            <ChartCanvas type="doughnut" height={200} data={{ labels: expenseCategories, datasets:[{ data: catTotals, backgroundColor: CHART_COLORS, borderWidth:0 }] }}
+              options={{ responsive:true, maintainAspectRatio:false, cutout:'68%', plugins:{legend:{display:false}} }} />
+            <div className="flex flex-wrap gap-2 mt-3">
+              {expenseCategories.map((c,i) => catTotals[i] > 0 && (
+                <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}>
+                  <span className="w-2.5 h-2.5 rounded-full" style={{background:CHART_COLORS[i%CHART_COLORS.length]}}></span>{c}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card p-5">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <span className="chip" style={{background:'var(--lavender)', color:'var(--cacao)'}}>Bevétel csatornák szerint</span>
+            <div className="text-2xl font-extrabold mt-2">{fmtHUF(totalRevenue)}</div>
+          </div>
+        </div>
+        {channelTotals.length === 0 ? <EmptyState icon="wallet" text="Nincs még bevétel." /> : (
+          <>
+            <ChartCanvas type="doughnut" height={200} data={{ labels: channelTotals.map(c=>c.name), datasets:[{ data: channelTotals.map(c=>c.total), backgroundColor: CHART_COLORS, borderWidth:0 }] }}
+              options={{ responsive:true, maintainAspectRatio:false, cutout:'68%', plugins:{legend:{display:false}} }} />
+            <div className="flex flex-wrap gap-2 mt-3">
+              {channelTotals.map((c,i) => (
+                <span key={c.id} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}>
+                  <span className="w-2.5 h-2.5 rounded-full" style={{background:CHART_COLORS[i%CHART_COLORS.length]}}></span>{c.name}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-bold">Top termékek</div>
+        </div>
+        {topProducts.length === 0 ? <EmptyState icon="star" text="Nincs még eladás." /> : (
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {topProducts.map(([name,val],i) => (
+              <div key={name} className="card p-4 flex-shrink-0" style={{minWidth:150}}>
+                <div className="icon-circle w-9 h-9 mb-3" style={{background: CHART_COLORS[i%CHART_COLORS.length]+'33', color: CHART_COLORS[i%CHART_COLORS.length]}}><Icon name="star" size={16} /></div>
+                <div className="text-sm font-semibold truncate">{name}</div>
+                <div className="font-extrabold mt-1">{fmtHUF(val)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {marginRows.length > 0 && (
+        <div className="card p-4">
+          <div className="font-bold mb-3">Termékenkénti anyagköltség és haszonkulcs</div>
+          <div className="space-y-2">
+            {marginRows.map(m => (
+              <div key={m.name} className="flex items-center justify-between text-sm gap-2">
+                <span className="truncate flex-1">{m.name}</span>
+                <span style={{color:'var(--text-dim)'}}>ár {fmtHUF(m.price)}</span>
+                <span style={{color:PALETTE.dusty}}>anyag {fmtHUF(m.cost)}</span>
+                <span className="font-bold flex-shrink-0" style={{color: m.marginPct>=0?PALETTE.grass:'var(--danger)'}}>{m.marginPct.toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {topTags.length > 0 && (
+        <div>
+          <div className="font-bold mb-3">Népszerű címkék</div>
+          <div className="flex flex-wrap gap-2">
+            {topTags.map(([tag,count]) => (
+              <span key={tag} className="chip" style={{background:'var(--bg)'}}>{tag} <b>· {count}</b></span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===================== JEGYZETEK ===================== */
+function Notes({ business, notes, onSave, onDelete }) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [text, setText] = useState('');
+
+  const openNew = () => { setEditing(null); setText(''); setSheetOpen(true); };
+  const openEdit = (n) => { setEditing(n); setText(n.text); setSheetOpen(true); };
+
+  const sorted = [...notes].sort((a,b) => (b.pinned - a.pinned) || b.date.localeCompare(a.date));
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold">Jegyzetek</h1>
+        <button onClick={openNew} className="btn-primary icon-circle w-10 h-10"><Icon name="plus" size={18} /></button>
+      </div>
+      {sorted.length === 0 ? <EmptyState icon="note" text="Még nincs jegyzet." /> : (
+        <div className="space-y-2">
+          {sorted.map(n => (
+            <div key={n.id} className="card p-3" onClick={()=>openEdit(n)}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs" style={{color:'var(--text-dim)'}}>{fmtDate(n.date)}</span>
+                {n.pinned && <span style={{color:'var(--cacao)'}}><Icon name="pin" size={14} /></span>}
+              </div>
+              <div className="text-sm whitespace-pre-wrap">{n.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <BottomSheet open={sheetOpen} onClose={()=>setSheetOpen(false)} title={editing ? 'Jegyzet szerkesztése' : 'Új jegyzet'}>
+        <textarea className="input min-h-[120px]" value={text} onChange={e=>setText(e.target.value)} placeholder="Írj egy jegyzetet…" />
+        <label className="flex items-center gap-2 mt-3 text-sm">
+          <input type="checkbox" defaultChecked={editing?.pinned} id="pin-cb" /> Kitűzés
+        </label>
+        <button className="btn-primary w-full py-3 rounded-2xl font-bold mt-3" onClick={()=>{
+          if (!text.trim()) return;
+          const pinned = document.getElementById('pin-cb').checked;
+          onSave({ id: editing?.id||uid(), businessId: business.id, date: editing?.date||todayISO(), text, pinned });
+          setSheetOpen(false);
+        }}>Mentés</button>
+        {editing && <button className="w-full text-center text-sm mt-3 py-2" style={{color:'var(--danger)'}} onClick={()=>{onDelete(editing.id); setSheetOpen(false);}}>Törlés</button>}
+      </BottomSheet>
+    </div>
+  );
+}
+
+/* ===================== BEVÁSÁRLÓLISTA ===================== */
+function ShoppingList({ business, products }) {
+  const [items, setItems] = useState([]); // [{productId, qty}]
+  const [loaded, setLoaded] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickProductId, setPickProductId] = useState('');
+  const [pickQty, setPickQty] = useState(1);
+
+  const storageKey = `shoppingList_${business.id}`;
+
+  useEffect(() => {
+    setLoaded(false);
+    idbGetSetting(storageKey, []).then(list => { setItems(list || []); setLoaded(true); });
+  }, [business.id]);
+
+  useEffect(() => { if (loaded) idbSetSetting(storageKey, items); }, [items, loaded]);
+
+  const withProduct = items.map(it => ({ ...it, product: products.find(p=>p.id===it.productId) })).filter(it => it.product);
+
+  const materialTotals = {};
+  withProduct.forEach(({ qty, product }) => {
+    (product.materials||[]).forEach(m => {
+      if (!m.name) return;
+      const key = m.name.trim().toLowerCase();
+      const needed = (Number(m.qty)||0) * qty;
+      const cost = needed * (Number(m.unitCost)||0);
+      if (!materialTotals[key]) materialTotals[key] = { name: m.name, unit: m.unit || 'db', qty: 0, cost: 0 };
+      materialTotals[key].qty += needed;
+      materialTotals[key].cost += cost;
+    });
+  });
+  const materialList = Object.values(materialTotals).sort((a,b)=>b.cost-a.cost);
+  const grandTotal = materialList.reduce((a,m)=>a+m.cost,0);
+
+  const addItem = () => {
+    if (!pickProductId) return;
+    setItems(list => {
+      const existing = list.find(it=>it.productId===pickProductId);
+      if (existing) return list.map(it => it.productId===pickProductId ? {...it, qty: it.qty + Number(pickQty)} : it);
+      return [...list, { productId: pickProductId, qty: Number(pickQty)||1 }];
+    });
+    setPickerOpen(false); setPickProductId(''); setPickQty(1);
+  };
+  const setQty = (productId, qty) => setItems(list => list.map(it => it.productId===productId ? {...it, qty: Number(qty)||0} : it));
+  const removeItem = (productId) => setItems(list => list.filter(it=>it.productId!==productId));
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold">Bevásárlólista</h1>
+        <button onClick={()=>setPickerOpen(true)} className="btn-primary icon-circle w-10 h-10"><Icon name="plus" size={18} /></button>
+      </div>
+
+      {withProduct.length === 0 ? (
+        <EmptyState icon="shoppingList" text="Adj hozzá termékeket, hogy lássad, mennyi anyag és mennyi pénz kell hozzájuk." />
+      ) : (
+        <>
+          <div>
+            <div className="font-bold mb-2">Termékek a listán</div>
+            <div className="space-y-2">
+              {withProduct.map(({ productId, qty, product }) => {
+                const unitMaterialCost = (product.materials||[]).reduce((a,m)=>a+(Number(m.qty)||0)*(Number(m.unitCost)||0),0);
+                return (
+                  <div key={productId} className="card p-3">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:'var(--peony)', color:'var(--cacao)'}}>
+                        {product.photos && product.photos[0] ? <img src={product.photos[0]} className="w-full h-full object-cover rounded-xl" /> : <Icon name="spool" size={16} />}
+                      </div>
+                      <div className="font-semibold text-sm truncate flex-1 min-w-0">{product.name}</div>
+                      <button className="icon-circle w-7 h-7 flex-shrink-0" style={{color:'var(--danger)'}} onClick={()=>removeItem(productId)}><Icon name="x" size={14} /></button>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span style={{color:'var(--text-dim)'}}>{fmtHUF(unitMaterialCost)} / db anyagköltség</span>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <input type="number" className="input py-1 w-16 text-center" value={qty} onChange={e=>setQty(productId, e.target.value)} />
+                        <span className="font-bold">{fmtHUF(unitMaterialCost*qty)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <div className="font-bold mb-3">Szükséges anyagok összesen</div>
+            {materialList.length === 0 ? (
+              <div className="text-sm" style={{color:'var(--text-dim)'}}>A kiválasztott termékekhez még nincs anyagköltség-lebontás megadva (Termékek → szerkesztés → Anyagköltség-lebontás).</div>
+            ) : (
+              <div className="space-y-2">
+                {materialList.map(m => (
+                  <div key={m.name} className="flex items-center justify-between text-sm">
+                    <span>{m.name} <span style={{color:'var(--text-dim)'}}>({Math.round(m.qty*100)/100} {m.unit})</span></span>
+                    <span className="font-semibold">{fmtHUF(m.cost)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between pt-2 mt-1 text-base" style={{borderTop:'1px solid var(--border)'}}>
+                  <span className="font-bold">Összesen</span>
+                  <span className="font-extrabold" style={{color:'var(--cacao)'}}>{fmtHUF(grandTotal)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <BottomSheet open={pickerOpen} onClose={()=>setPickerOpen(false)} title="Termék hozzáadása">
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Termék</label>
+            <select className="input mt-1" value={pickProductId} onChange={e=>setPickProductId(e.target.value)}>
+              <option value="">— válassz —</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Mennyiség</label>
+            <input type="number" className="input mt-1" value={pickQty} onChange={e=>setPickQty(e.target.value)} />
+          </div>
+          <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={addItem}>Hozzáadás</button>
+        </div>
+      </BottomSheet>
+    </div>
+  );
+}
+
+/* ===================== EXCEL IMPORT ===================== */
+function loadSheetJS() {
+  return new Promise((resolve, reject) => {
+    if (window.XLSX) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+
+function guessTargetType(sheetName) {
+  const n = norm(sheetName);
+  if (n.includes('bevetel')) return 'sales';
+  if (n.includes('kiadas')) return 'expenses';
+  if (n.includes('termek') || n.includes('raktar') || n.includes('keszlet')) return 'products';
+  return 'sales';
+}
+function guessColMap(header, targetFields) {
+  const map = {};
+  targetFields.forEach(([field, label]) => {
+    const target = norm(label);
+    const idx = header.findIndex(h => h != null && (norm(h).includes(target) || target.includes(norm(h))));
+    if (idx >= 0) map[field] = idx;
+  });
+  return map;
+}
+
+function ExcelImport({ business, channels, sales, expenses, products, expenseCategories, setExpenseCategories, productCategories, setProductCategories, onImported }) {
+  const [step, setStep] = useState('pick'); // pick, map, done
+  const [result, setResult] = useState({ added: 0, skipped: 0 });
+  const [sheets, setSheets] = useState({});
+  const [sheetName, setSheetName] = useState('');
+  const [targetType, setTargetType] = useState('sales');
+  const [colMap, setColMap] = useState({});
+  const fileRef = useRef(null);
+
+  const targetFieldsFor = (type) => type==='sales'
+    ? [['productName','Termék'],['qty','Mennyiség'],['unitPrice','Egységár'],['date','Dátum'],['channel','Csatorna'],['note','Megjegyzés']]
+    : type==='expenses'
+    ? [['description','Leírás'],['amount','Összeg'],['date','Dátum'],['category','Kategória'],['note','Megjegyzés']]
+    : [['name','Név'],['stock','Készlet'],['category','Kategória']];
+
+  const applySheet = (name, sheetsObj) => {
+    const rows = sheetsObj[name] || [];
+    const header = rows[0] || [];
+    const type = guessTargetType(name);
+    setTargetType(type);
+    setColMap(guessColMap(header, targetFieldsFor(type)));
+    setSheetName(name);
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    await loadSheetJS();
+    const buf = await file.arrayBuffer();
+    const wb = window.XLSX.read(buf, { type: 'array' });
+    const parsed = {};
+    wb.SheetNames.forEach(name => { parsed[name] = window.XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true }); });
+    setSheets(parsed);
+    const firstDataSheet = wb.SheetNames.find(n => (parsed[n]||[]).length > 1) || wb.SheetNames[0];
+    applySheet(firstDataSheet, parsed);
+    setStep('map');
+  };
+
+  const rows = sheets[sheetName] || [];
+  const header = rows[0] || [];
+  const dataRows = rows.slice(1).filter(r => r.some(c => c !== undefined && c !== ''));
+  const targetFields = targetFieldsFor(targetType);
+
+  const doImport = async () => {
+    let added = 0, skipped = 0;
+    const newExpCats = new Set(expenseCategories);
+    const newProdCats = new Set(productCategories);
+    const saleSig = s => `${s.date}|${norm(s.productName)}|${s.qty}|${s.unitPrice}`;
+    const expenseSig = e => `${e.date}|${norm(e.description)}|${e.amount}`;
+    const seenSales = new Set(sales.map(saleSig));
+    const seenExpenses = new Set(expenses.map(expenseSig));
+    const seenProductNames = new Set(products.map(p => norm(p.name)));
+
+    for (const row of dataRows) {
+      const get = (field) => { const idx = colMap[field]; return idx === undefined || idx === '' ? undefined : row[Number(idx)]; };
+      if (targetType === 'sales') {
+        const productName = get('productName'); if (!productName) continue;
+        const qty = Number(get('qty')) || 1;
+        const unitPrice = Number(get('unitPrice')) || 0;
+        let date = get('date'); date = typeof date === 'number' ? excelDateToISO(date) : (date || todayISO());
+        date = date || todayISO();
+        const sig = saleSig({ date, productName, qty, unitPrice });
+        if (seenSales.has(sig)) { skipped++; continue; }
+        seenSales.add(sig);
+        const channelName = get('channel');
+        const channel = channelName ? channels.find(c => norm(c.name) === norm(channelName)) : null;
+        const fee = channel?.fee || 0;
+        const gross = qty * unitPrice;
+        const commissionAmount = Math.round(gross * (fee/100));
+        await idbPut('sales', { id: uid(), businessId: business.id, date, productName: String(productName), qty, unitPrice, channelId: channel?.id || 'own_shop', fee, net: gross - commissionAmount, commissionAmount, note: get('note') ? String(get('note')) : '', tags: [] });
+      } else if (targetType === 'expenses') {
+        const description = get('description'); const amount = Number(get('amount'));
+        if (!description || !amount) continue;
+        let date = get('date'); date = typeof date === 'number' ? excelDateToISO(date) : (date || todayISO());
+        date = date || todayISO();
+        const sig = expenseSig({ date, description, amount });
+        if (seenExpenses.has(sig)) { skipped++; continue; }
+        seenExpenses.add(sig);
+        let category = get('category') ? String(get('category')) : 'Egyéb';
+        if (!newExpCats.has(category)) newExpCats.add(category);
+        await idbPut('expenses', { id: uid(), businessId: business.id, date, category, description: String(description), amount, note: get('note') ? String(get('note')) : '', tags: [] });
+      } else {
+        const name = get('name'); if (!name) continue;
+        if (seenProductNames.has(norm(name))) { skipped++; continue; }
+        seenProductNames.add(norm(name));
+        const stock = Number(get('stock')) || 0;
+        let category = get('category') ? String(get('category')) : 'Egyéb';
+        if (!newProdCats.has(category)) newProdCats.add(category);
+        await idbPut('products', { id: uid(), businessId: business.id, name: String(name), category, cost:0, price:0, stock, photos:[], createdAt: todayISO() });
+      }
+      added++;
+    }
+    if (newExpCats.size !== expenseCategories.length) setExpenseCategories([...newExpCats]);
+    if (newProdCats.size !== productCategories.length) setProductCategories([...newProdCats]);
+    setResult({ added, skipped });
+    setStep('done');
+    onImported(added);
+  };
+
+  if (step === 'pick') {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-2xl p-3 flex items-start gap-2 text-xs" style={{background:PALETTE.dusty+'22', color:'var(--text)'}}>
+          <Icon name="alert" size={15} className="flex-shrink-0 mt-0.5" style={{color:PALETTE.dusty}} />
+          <span>Az Excel-importálás még nem tökéletes: az oszlop-felismerés és a dátumbecslés hibázhat, ezért <b>importálás után mindig nézd át</b> a Pénzügyek listákban a betöltött tételeket, és javítsd ki, ami nem stimmel.</span>
+        </div>
+        <p className="text-sm" style={{color:'var(--text-dim)'}}>Válassz egy .xlsx fájlt — pl. a projekt mellé mellékelt <b>minta_import.xlsx</b> fájlt, ami a régi raktár/bevétel/kiadás nyilvántartásodból lett rendszerezve. A program megpróbálja automatikusan felismerni az oszlopokat, de bármikor módosíthatod.</p>
+        <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={()=>fileRef.current.click()}>Fájl kiválasztása</button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
+      </div>
+    );
+  }
+  if (step === 'map') {
+    return (
+      <div className="space-y-3">
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Munkalap</label>
+          <select className="input mt-1" value={sheetName} onChange={e=>applySheet(e.target.value, sheets)}>{Object.keys(sheets).map(n=><option key={n} value={n}>{n}</option>)}</select>
+        </div>
+        <div><label className="text-xs font-semibold" style={{color:'var(--text-dim)'}}>Ez a lap milyen adat?</label>
+          <select className="input mt-1" value={targetType} onChange={e=>{ setTargetType(e.target.value); setColMap(guessColMap(header, targetFieldsFor(e.target.value))); }}>
+            <option value="sales">Bevétel</option>
+            <option value="expenses">Kiadás</option>
+            <option value="products">Termék / készlet</option>
+          </select>
+        </div>
+        <div className="text-xs" style={{color:'var(--text-dim)'}}>{dataRows.length} sor található ezen a lapon (fejléc nélkül). A zöld pipával jelölt mezőket automatikusan felismertük.</div>
+        {targetFields.map(([field,label]) => (
+          <div key={field}>
+            <label className="text-xs font-semibold flex items-center gap-1.5" style={{color:'var(--text-dim)'}}>
+              {label} oszlopa {colMap[field] !== undefined && <Icon name="check" size={13} style={{color:PALETTE.grass}} />}
+            </label>
+            <select className="input mt-1" value={colMap[field] ?? ''} onChange={e=>setColMap(m=>({...m,[field]:e.target.value}))}>
+              <option value="">— nincs —</option>
+              {header.map((h,i) => <option key={i} value={i}>{String(h ?? `Oszlop ${i+1}`)}</option>)}
+            </select>
+          </div>
+        ))}
+        <button className="btn-primary w-full py-3 rounded-2xl font-bold" onClick={doImport}>Importálás indítása</button>
+      </div>
+    );
+  }
+  return (
+    <div className="text-center py-6">
+      <div className="icon-circle w-14 h-14 mx-auto mb-2" style={{background:PALETTE.grass+'33', color:PALETTE.grass}}><Icon name="check" size={26} /></div>
+      <div className="font-semibold">Importálás kész!</div>
+      <div className="text-sm mt-2" style={{color:'var(--text-dim)'}}>{result.added} tétel hozzáadva{result.skipped > 0 && <>, {result.skipped} duplikátum kihagyva</>}.</div>
+    </div>
+  );
+}
+
+/* ===================== BEÁLLÍTÁSOK ===================== */
+function Settings({ business, businesses, sales, expenses, products, channels, setChannels, expenseCategories, setExpenseCategories, productCategories, setProductCategories, theme, setTheme, onExportAll, onImportAll, onExportExcel, storageInfo, onOpenBusinessSwitcher }) {
+  const [importOpen, setImportOpen] = useState(false);
+  const importFileRef = useRef(null);
+  const [newChannel, setNewChannel] = useState('');
+  const [newExpCat, setNewExpCat] = useState('');
+  const [newProdCat, setNewProdCat] = useState('');
+
+  return (
+    <div className="fade-in p-4 pb-28 space-y-5">
+      <h1 className="text-2xl font-extrabold">Beállítások</h1>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Vállalkozás</div>
+        <div className="flex items-center justify-between">
+          <span>{business.name}</span>
+          <button className="chip" style={{background:'var(--bg)'}} onClick={onOpenBusinessSwitcher}>Váltás / kezelés</button>
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Megjelenés</div>
+        <div className="flex gap-2">
+          {[['light','Világos','sun'],['dark','Sötét','moon']].map(([v,l,ic]) => (
+            <button key={v} onClick={()=>setTheme(v)} className="flex-1 py-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5" style={{background: theme===v?'var(--cacao)':'var(--bg)', color: theme===v?'#fff':'var(--text)'}}><Icon name={ic} size={15} />{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Értékesítési csatornák</div>
+        <div className="space-y-2 mb-2">
+          {channels.map((c,i) => (
+            <div key={c.id} className="flex items-center gap-2">
+              <span className="flex-1 text-sm">{c.name}</span>
+              <input type="number" className="input py-1 w-20" value={c.fee} onChange={e=>{
+                const arr=[...channels]; arr[i]={...c,fee:Number(e.target.value)}; setChannels(arr);
+              }} />
+              <span className="text-xs" style={{color:'var(--text-dim)'}}>%</span>
+              <button onClick={()=>setChannels(channels.filter((_,j)=>j!==i))} className="icon-circle w-7 h-7" style={{color:'var(--danger)'}}><Icon name="trash" size={14} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input className="input" placeholder="Új csatorna neve" value={newChannel} onChange={e=>setNewChannel(e.target.value)} />
+          <button className="chip" style={{background:'var(--bg)'}} onClick={()=>{ if(newChannel.trim()){ setChannels([...channels,{id:uid(),name:newChannel.trim(),fee:0}]); setNewChannel(''); } }}>+</button>
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Kiadás kategóriák</div>
+        <div className="flex gap-2 flex-wrap mb-2">
+          {expenseCategories.map((c,i) => <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}><Icon name={CATEGORY_ICON[c]||'tag'} size={13} />{c} <button onClick={()=>setExpenseCategories(expenseCategories.filter((_,j)=>j!==i))}><Icon name="x" size={12} /></button></span>)}
+        </div>
+        <div className="flex gap-2">
+          <input className="input" placeholder="Új kategória" value={newExpCat} onChange={e=>setNewExpCat(e.target.value)} />
+          <button className="chip" style={{background:'var(--bg)'}} onClick={()=>{ if(newExpCat.trim()){ setExpenseCategories([...expenseCategories,newExpCat.trim()]); setNewExpCat(''); } }}>+</button>
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Termék kategóriák</div>
+        <div className="flex gap-2 flex-wrap mb-2">
+          {productCategories.map((c,i) => <span key={c} className="chip flex items-center gap-1.5" style={{background:'var(--bg)'}}>{c} <button onClick={()=>setProductCategories(productCategories.filter((_,j)=>j!==i))}><Icon name="x" size={12} /></button></span>)}
+        </div>
+        <div className="flex gap-2">
+          <input className="input" placeholder="Új kategória" value={newProdCat} onChange={e=>setNewProdCat(e.target.value)} />
+          <button className="chip" style={{background:'var(--bg)'}} onClick={()=>{ if(newProdCat.trim()){ setProductCategories([...productCategories,newProdCat.trim()]); setNewProdCat(''); } }}>+</button>
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Excel importálás</div>
+        <p className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Régi excel (raktár / bevétel / kiadás) betöltése ehhez a vállalkozáshoz.</p>
+        <button className="chip w-full text-center" style={{background:'var(--bg)'}} onClick={()=>setImportOpen(true)}>Excel importálása</button>
+      </div>
+
+      <div className="card p-4">
+        <div className="font-bold mb-2">Adatmentés</div>
+        <p className="text-xs mb-2" style={{color:'var(--text-dim)'}}>Tárhely: {storageInfo}. Rendszeresen készíts JSON mentést, hogy az adatok böngésző-ürítés esetén se vesszenek el.</p>
+        <div className="flex gap-2 mb-2">
+          <button className="chip flex-1 flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={onExportAll}><Icon name="download" size={14} />JSON mentés</button>
+          <button className="chip flex-1 flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={()=>importFileRef.current.click()}><Icon name="upload" size={14} />Visszatöltés</button>
+          <input ref={importFileRef} type="file" accept="application/json" className="hidden" onChange={e=>{ if(e.target.files[0]) onImportAll(e.target.files[0]); }} />
+        </div>
+        <button className="chip w-full flex items-center justify-center gap-1.5" style={{background:'var(--bg)'}} onClick={onExportExcel}><Icon name="layers" size={14} />Excel exportálás (ez a vállalkozás)</button>
+      </div>
+
+      <BottomSheet open={importOpen} onClose={()=>setImportOpen(false)} title="Excel importálása">
+        <ExcelImport business={business} channels={channels} sales={sales} expenses={expenses} products={products} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} productCategories={productCategories} setProductCategories={setProductCategories}
+          onImported={(n)=>{ setTimeout(()=>{ setImportOpen(false); window.location.reload(); }, 2200); }} />
+      </BottomSheet>
+    </div>
+  );
+}
+
+/* ===================== FŐ ALKALMAZÁS ===================== */
+function App() {
+  const [ready, setReady] = useState(false);
+  const [businesses, setBusinesses] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [channels, setChannelsState] = useState(DEFAULT_CHANNELS);
+  const [expenseCategories, setExpenseCategoriesState] = useState(DEFAULT_EXPENSE_CATEGORIES);
+  const [productCategories, setProductCategoriesState] = useState(DEFAULT_PRODUCT_CATEGORIES);
+  const [theme, setThemeState] = useState('light');
+  const [page, setPage] = useState('dashboard');
+  const [pendingTab, setPendingTab] = useState(null);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [storageInfo, setStorageInfo] = useState('...');
+  const [unprotected, setUnprotected] = useState(false);
+
+  // Induláskor: DB betöltés + demó seedelés
+  useEffect(() => {
+    (async () => {
+      try { if (navigator.storage && navigator.storage.persist) {
+        const persisted = await navigator.storage.persisted();
+        if (!persisted) { const granted = await navigator.storage.persist(); setUnprotected(!granted); }
+      } } catch(e){}
+
+      let biz = await idbGetAll('businesses');
+      if (biz.length === 0) { await seedDemoBusiness(); biz = await idbGetAll('businesses'); }
+      setBusinesses(biz);
+
+      let active = await idbGetSetting('activeBusinessId', null);
+      if (!active || !biz.find(b=>b.id===active)) active = biz[0].id;
+      setActiveId(active);
+
+      const savedChannels = await idbGetSetting('channels', null);
+      if (savedChannels) setChannelsState(savedChannels);
+      const savedExpCats = await idbGetSetting('expenseCategories', null);
+      if (savedExpCats) setExpenseCategoriesState(savedExpCats);
+      const savedProdCats = await idbGetSetting('productCategories', null);
+      if (savedProdCats) setProductCategoriesState(savedProdCats);
+      const savedTheme = await idbGetSetting('theme', 'light');
+      setThemeState(savedTheme);
+
+      setReady(true);
+    })();
+  }, []);
+
+  useEffect(() => { document.documentElement.classList.toggle('dark', theme === 'dark'); if (ready) idbSetSetting('theme', theme); }, [theme, ready]);
+  useEffect(() => { if (ready) idbSetSetting('channels', channels); }, [channels, ready]);
+  useEffect(() => { if (ready) idbSetSetting('expenseCategories', expenseCategories); }, [expenseCategories, ready]);
+  useEffect(() => { if (ready) idbSetSetting('productCategories', productCategories); }, [productCategories, ready]);
+
+  const reloadBusinessData = useCallback(async (businessId) => {
+    if (!businessId) return;
+    const [p,s,e,n] = await Promise.all([
+      idbGetAllByBusiness('products', businessId),
+      idbGetAllByBusiness('sales', businessId),
+      idbGetAllByBusiness('expenses', businessId),
+      idbGetAllByBusiness('notes', businessId),
+    ]);
+    setProducts(p); setSales(s); setExpenses(e); setNotes(n);
+  }, []);
+
+  useEffect(() => { if (ready && activeId) reloadBusinessData(activeId); }, [ready, activeId]);
+
+  useEffect(() => {
+    if (!navigator.storage || !navigator.storage.estimate) return;
+    navigator.storage.estimate().then(est => {
+      const used = ((est.usage||0)/1024/1024).toFixed(1);
+      const quota = ((est.quota||0)/1024/1024/1024).toFixed(1);
+      setStorageInfo(`${used} MB / ~${quota} GB`);
+    });
+  }, [products, sales, expenses, notes]);
+
+  const switchBusiness = (id) => { setActiveId(id); idbSetSetting('activeBusinessId', id); setPage('dashboard'); };
+  const createBiz = async (name) => { const b = await createBusiness(name); setBusinesses(bs=>[...bs,b]); switchBusiness(b.id); };
+  const renameBiz = async (id, name) => { const b = businesses.find(x=>x.id===id); const updated = {...b, name}; await idbPut('businesses', updated); setBusinesses(bs=>bs.map(x=>x.id===id?updated:x)); };
+  const deleteBiz = async (b) => {
+    if (!window.confirm(`Biztosan törlöd a(z) "${b.name}" vállalkozást minden adatával együtt? Ez nem visszavonható.`)) return;
+    await deleteBusinessCascade(b.id);
+    const remaining = businesses.filter(x=>x.id!==b.id);
+    setBusinesses(remaining);
+    if (activeId === b.id) switchBusiness(remaining[0].id);
+  };
+
+  const nav = (targetPage, tab) => { setPage(targetPage); setPendingTab(tab||null); };
+
+  const saveProduct = async (p) => { await idbPut('products', p); setProducts(ps => { const i=ps.findIndex(x=>x.id===p.id); if (i>=0){ const c=[...ps]; c[i]=p; return c;} return [...ps,p]; }); };
+  const deleteProduct = async (id) => { await idbDelete('products', id); setProducts(ps=>ps.filter(p=>p.id!==id)); };
+  const saveSale = async (s) => { await idbPut('sales', s); setSales(list => { const i=list.findIndex(x=>x.id===s.id); if (i>=0){ const c=[...list]; c[i]=s; return c;} return [...list,s]; }); };
+  const deleteSale = async (id) => { await idbDelete('sales', id); setSales(list=>list.filter(x=>x.id!==id)); };
+  const saveExpense = async (e) => { await idbPut('expenses', e); setExpenses(list => { const i=list.findIndex(x=>x.id===e.id); if (i>=0){ const c=[...list]; c[i]=e; return c;} return [...list,e]; }); };
+  const deleteExpense = async (id) => { await idbDelete('expenses', id); setExpenses(list=>list.filter(x=>x.id!==id)); };
+  const saveNote = async (n) => { await idbPut('notes', n); setNotes(list => { const i=list.findIndex(x=>x.id===n.id); if (i>=0){ const c=[...list]; c[i]=n; return c;} return [...list,n]; }); };
+  const deleteNote = async (id) => { await idbDelete('notes', id); setNotes(list=>list.filter(x=>x.id!==id)); };
+
+  const exportAll = async () => {
+    const data = {};
+    for (const s of STORES) data[s] = await idbGetAll(s);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `business-tracker-mentes-${todayISO()}.json`;
+    a.click();
+  };
+  const importAll = async (file) => {
+    if (!window.confirm('A visszatöltés felülírja a jelenlegi összes adatot. Folytatod?')) return;
+    const text = await file.text();
+    const data = JSON.parse(text);
+    await idbClearAll();
+    for (const s of STORES) { for (const item of (data[s]||[])) await idbPut(s, item); }
+    window.location.reload();
+  };
+
+  const exportExcel = async () => {
+    await loadSheetJS();
+    const activeBusiness = businesses.find(b=>b.id===activeId);
+    const bevetelRows = [...sales].sort((a,b)=>a.date.localeCompare(b.date)).map(s => ({
+      'Dátum': s.date, 'Termék': s.productName, 'Mennyiség': s.qty, 'Egységár': s.unitPrice,
+      'Bruttó': s.qty*s.unitPrice, 'Csatorna': channels.find(c=>c.id===s.channelId)?.name || '', 'Jutalék %': s.fee || 0,
+      'Jutalék összeg': s.commissionAmount || 0, 'Nettó': s.net || 0, 'Fizetési mód': s.paymentMethod || '',
+      'Címkék': (s.tags||[]).join(', '), 'Megjegyzés': s.note || '',
+    }));
+    const kiadasRows = [...expenses].sort((a,b)=>a.date.localeCompare(b.date)).map(e => ({
+      'Dátum': e.date, 'Kategória': e.category, 'Leírás': e.description, 'Összeg': e.amount,
+      'Link': e.link || '', 'Fizetési mód': e.paymentMethod || '', 'Címkék': (e.tags||[]).join(', '), 'Megjegyzés': e.note || '',
+    }));
+    const termekekRows = [...products].sort((a,b)=>a.name.localeCompare(b.name,'hu')).map(p => ({
+      'Név': p.name, 'Kategória': p.category, 'Készlet': p.stock, 'Önköltség': p.cost, 'Alapár': p.price,
+      'Anyagköltség (számított)': (p.materials||[]).reduce((a,m)=>a+(Number(m.qty)||0)*(Number(m.unitCost)||0),0),
+    }));
+    const totalRevenue = sales.reduce((a,s)=>a+(s.net??0),0);
+    const totalExpense = expenses.reduce((a,e)=>a+e.amount,0);
+    const osszesitoRows = [
+      { 'Mutató': 'Összes bevétel (nettó)', 'Érték': totalRevenue },
+      { 'Mutató': 'Összes kiadás', 'Érték': totalExpense },
+      { 'Mutató': 'Profit', 'Érték': totalRevenue - totalExpense },
+      { 'Mutató': 'Rendelések száma', 'Érték': sales.length },
+      { 'Mutató': 'Exportálás dátuma', 'Érték': todayISO() },
+    ];
+
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(osszesitoRows), 'Összesítő');
+    window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(bevetelRows), 'Bevétel');
+    window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(kiadasRows), 'Kiadás');
+    window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(termekekRows), 'Termékek');
+    window.XLSX.writeFile(wb, `${(activeBusiness?.name||'business-tracker').replace(/[^\w\-áéíóöőúüű ]/gi,'')}-export-${todayISO()}.xlsx`);
+  };
+
+  if (!ready || !activeId) {
+    return <div className="min-h-screen flex items-center justify-center" style={{background:'var(--bg)'}}><div className="spinner"></div></div>;
+  }
+
+  const business = businesses.find(b=>b.id===activeId);
+  const NAV = [
+    ['dashboard','Kezdőlap','home'], ['products','Termékek','box'], ['finances','Pénzügyek','card'],
+    ['stats','Statisztika','chart'], ['more','Több','menu'],
+  ];
+
+  return (
+    <div className="min-h-screen max-w-md mx-auto relative" style={{background:'var(--bg)'}}>
+      {unprotected && (
+        <div className="text-xs text-center py-1.5 px-3 flex items-center justify-center gap-1.5" style={{background:PALETTE.dusty, color:'#fff'}}>
+          <Icon name="alert" size={13} /> A tárhely nincs védve — telepítsd az appot a kezdőképernyőre, és mentsd le rendszeresen a Beállításokban.
+        </div>
+      )}
+      <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-3" style={{background:'var(--bg)'}}>
+        <button onClick={()=>setSwitcherOpen(true)} className="flex items-center gap-2.5">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold" style={{background:business.color}}>{business.name.trim().charAt(0).toUpperCase()}</div>
+          <div className="text-left">
+            <div className="text-xs" style={{color:'var(--text-dim)'}}>Szia!</div>
+            <div className="font-bold truncate max-w-[160px] flex items-center gap-1">{business.name}<Icon name="chevronDown" size={14} /></div>
+          </div>
+        </button>
+        <button onClick={()=>setPage('settings')} className="icon-circle w-10 h-10" style={{background:'var(--surface)', border:'1px solid var(--border)', color:'var(--text-dim)'}}>
+          <Icon name="settings" size={18} />
+        </button>
+      </div>
+
+      {page === 'dashboard' && <Dashboard business={business} products={products} sales={sales} expenses={expenses} channels={channels} onNav={nav} />}
+      {page === 'products' && <Products business={business} products={products} categories={productCategories} channels={channels} onSave={saveProduct} onDelete={deleteProduct} autoOpenNew={pendingTab==='new'} onAutoOpenHandled={()=>setPendingTab(null)} />}
+      {page === 'finances' && <Finances business={business} products={products} sales={sales} expenses={expenses} channels={channels} expenseCategories={expenseCategories} onSaveSale={saveSale} onDeleteSale={deleteSale} onSaveExpense={saveExpense} onDeleteExpense={deleteExpense} initialTab={pendingTab} onAutoOpenHandled={()=>setPendingTab(null)} />}
+      {page === 'stats' && <Stats sales={sales} expenses={expenses} channels={channels} expenseCategories={expenseCategories} products={products} />}
+      {page === 'calculator' && <Calculator channels={channels} products={products} onSavePreset={async (preset)=>{ await idbPut('priceCalcPresets', {...preset, businessId: business.id}); alert('Kalkuláció elmentve.'); }} onSaveToProduct={(p)=>{ saveProduct({ id: uid(), businessId: business.id, category: productCategories[0], stock:0, photos:[], createdAt: todayISO(), ...p }); setPage('products'); }} />}
+      {page === 'notes' && <Notes business={business} notes={notes} onSave={saveNote} onDelete={deleteNote} />}
+      {page === 'shopping' && <ShoppingList business={business} products={products} />}
+      {page === 'settings' && <Settings business={business} businesses={businesses} sales={sales} expenses={expenses} products={products} channels={channels} setChannels={setChannelsState} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategoriesState} productCategories={productCategories} setProductCategories={setProductCategoriesState} theme={theme} setTheme={setThemeState} onExportAll={exportAll} onImportAll={importAll} onExportExcel={exportExcel} storageInfo={storageInfo} onOpenBusinessSwitcher={()=>setSwitcherOpen(true)} />}
+      {page === 'more' && (
+        <div className="fade-in p-4 pb-28 space-y-3">
+          <h1 className="text-2xl font-extrabold mb-2">Több</h1>
+          {[['calculator','Árkalkulátor','calculator'],['shopping','Bevásárlólista','shoppingList'],['notes','Jegyzetek','note'],['settings','Beállítások','settings']].map(([id,label,icon]) => (
+            <button key={id} onClick={()=>setPage(id)} className="card p-4 w-full flex items-center gap-3 text-left">
+              <div className="icon-circle w-10 h-10" style={{background:'var(--peony)', color:'var(--cacao)'}}><Icon name={icon} size={18} /></div>
+              <span className="font-semibold">{label}</span>
+              <span className="ml-auto" style={{color:'var(--text-dim)'}}><Icon name="chevronRight" size={16} /></span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="fixed bottom-0 left-0 right-0 z-40" style={{paddingBottom:'max(env(safe-area-inset-bottom), 12px)'}}>
+        <div className="max-w-md mx-auto px-4">
+          <div className="flex items-stretch justify-between px-2 py-2 nav-pill" style={{background:'var(--surface)'}}>
+            {NAV.map(([id,label,icon]) => {
+              const active = page===id || (id==='more' && ['calculator','shopping','notes','settings'].includes(page));
+              return (
+                <button key={id} onClick={()=>{ setPage(id); setPendingTab(null); }} className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-full transition"
+                  style={{color: active ? '#fff' : 'var(--text-dim)', background: active ? 'var(--cacao)' : 'transparent', margin:'0 2px', minWidth:0}}>
+                  <Icon name={icon} size={19} />
+                  <span className="text-[10px] font-semibold">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <BusinessSwitcher open={switcherOpen} onClose={()=>setSwitcherOpen(false)} businesses={businesses} activeId={activeId}
+        onSwitch={switchBusiness} onCreate={createBiz} onDelete={deleteBiz} onRename={renameBiz} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
