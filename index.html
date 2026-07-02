@@ -866,6 +866,7 @@ function Products({ business, products, sales, categories, channels, onSave, onD
     const copy = { ...p, id: uid(), name: `${p.name} (másolat)`, createdAt: todayISO() };
     onSave(copy);
     setEditing(copy);
+    alert('Duplikálás sikeres — most a másolatot szerkeszted.');
   };
 
   const addToShoppingList = async (productId) => {
