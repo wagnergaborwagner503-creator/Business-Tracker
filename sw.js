@@ -1,5 +1,5 @@
-// Business Tracker – Service Worker v1
-const CACHE = 'biztracker-v1';
+// Trackly – Service Worker v2
+const CACHE = 'biztracker-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 

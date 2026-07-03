@@ -1,4 +1,4 @@
-# 🧵 Business Tracker — Vállalkozás napló
+# 🧵 Trackly — Vállalkozás napló
 
 Kézműves vállalkozásokhoz (táska, horgolás, stb.) készült, telefonra optimalizált napló: termékek, bevételek, kiadások, árkalkulátor és statisztikák — **több, egymástól elkülönített vállalkozással**.
 
