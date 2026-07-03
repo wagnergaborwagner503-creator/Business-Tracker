@@ -1962,7 +1962,7 @@ function App() {
   const [expenseCategories, setExpenseCategoriesState] = useState(DEFAULT_EXPENSE_CATEGORIES);
   const [productCategories, setProductCategoriesState] = useState(DEFAULT_PRODUCT_CATEGORIES);
   const [theme, setThemeState] = useState('light');
-  const [autoBackup, setAutoBackupState] = useState(true);
+  const [autoBackup, setAutoBackupState] = useState(false);
   const [page, setPageState] = useState('dashboard');
   const homeHandlerRef = useRef(null);
   useEffect(() => {
@@ -2012,7 +2012,7 @@ function App() {
         idbGetSetting('expenseCategories', null),
         idbGetSetting('productCategories', null),
         idbGetSetting('theme', 'light'),
-        idbGetSetting('autoBackupEnabled', true),
+        idbGetSetting('autoBackupEnabled', false),
       ]);
 
       const active = (active0 && biz.find(b=>b.id===active0)) ? active0 : biz[0].id;
@@ -2033,6 +2033,19 @@ function App() {
     if (ready) return;
     const t = setTimeout(() => setLoadStuck(true), 6000);
     return () => clearTimeout(t);
+  }, [ready]);
+
+  // Első belépéskor (eszközönként/DB-nként egyszer) rákérdezünk, szeretné-e a felhasználó
+  // bekapcsolni a napi automatikus mentést — alapból ki van kapcsolva.
+  useEffect(() => {
+    if (!ready) return;
+    (async () => {
+      const promptShown = await idbGetSetting('autoBackupPromptShown', false);
+      if (promptShown) return;
+      await idbSetSetting('autoBackupPromptShown', true);
+      const enable = await confirmDialog('Szeretnéd bekapcsolni a napi automatikus mentést?\nÍgy minden nap készül egy biztonsági JSON mentés az adataidról.', 'Bekapcsolás', false);
+      if (enable) setAutoBackupState(true);
+    })();
   }, [ready]);
 
   useEffect(() => { document.documentElement.classList.toggle('dark', theme === 'dark'); if (ready) idbSetSetting('theme', theme); }, [theme, ready]);
